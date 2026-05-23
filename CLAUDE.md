@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-このリポジトリは初期状態であり、現時点では `.gitignore`（Python 用テンプレート）と `docs/design.md`（設計書）のみが含まれている。ソースコード・ビルド設定・テストはまだ存在しない。
+このリポジトリは初期状態であり、現時点では `.gitignore`（Python 用テンプレート）と `docs/design/`（章ごとに分割された設計書）のみが含まれている。ソースコード・ビルド設定・テストはまだ存在しない。
 
-実装方針は `docs/design.md` を参照（FastAPI + PostgreSQL + Alembic + SQLAlchemy async、e-Gov 法令API v2 互換、法令XMLを正規化テーブルに展開）。
+実装方針は `docs/design/README.md` を起点に各章ファイルを参照（FastAPI + PostgreSQL + Alembic + SQLAlchemy async、e-Gov 法令API v2 互換、法令XMLを正規化テーブルに展開）。
 
 - リポジトリ名: `laws-api-mirror`
 - 推定される性質: 日本の法令 API（e-Gov 法令 API など）をミラー／ラップする Python プロジェクトと見られるが、実装方針は未確定。
