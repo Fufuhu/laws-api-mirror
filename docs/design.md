@@ -207,70 +207,122 @@ TABLE law_xml
 
 ### 4.7 法令本文の構造化（正規化の核）
 
-法令 XML の階層（`Law > LawBody > MainProvision > Part > Chapter > Section > Subsection > Division > Article > Paragraph > Item > Subitem1..10`、+ `TOC`, `Preamble`, `SupplProvision`, `AppdxTable`, `AppdxStyle`, `AppdxFormat`, `Appdx`, `AppdxFig` 等）を **単一テーブル**にツリー格納する。
+法令 XML の全要素を **単一テーブル `law_node` にツリー格納**する。XSD v3 は 80 以上の要素を定義するため、ENUM ではなく **lookup テーブル `node_kind`** に切り出し、XSD バージョンアップに耐えうる設計とする。
 
 ```
-TYPE node_kind ENUM (
-  'Law','LawBody','LawNum','LawTitle','EnactStatement','Preamble',
-  'TOC','TOCLabel','TOCPart','TOCChapter','TOCSection','TOCArticle','TOCSupplProvision','TOCAppdxTableLabel',
-  'MainProvision','Part','Chapter','Section','Subsection','Division',
-  'Article','ArticleTitle','ArticleCaption',
-  'Paragraph','ParagraphNum','ParagraphSentence','ParagraphCaption',
-  'Item','ItemTitle','ItemSentence',
-  'Subitem1','Subitem2','Subitem3','Subitem4','Subitem5',
-  'Subitem6','Subitem7','Subitem8','Subitem9','Subitem10',
-  'SupplProvision','SupplProvisionLabel','SupplProvisionAppdxTable','SupplProvisionAppdxStyle','SupplProvisionAppdx',
-  'AppdxTable','AppdxStyle','AppdxFormat','Appdx','AppdxFig','AppdxNote',
-  'TableStruct','Table','TableRow','TableColumn','TableHeaderRow','TableHeaderColumn',
-  'FigStruct','Fig','StyleStruct','Style','FormatStruct','Format','NoteStruct','Note','RemarksLabel','Remarks',
-  'Sentence','Column','List','ListSentence','Sublist1','Sublist2','Sublist3',
-  -- インライン要素は基本的に展開せず Sentence の raw_text に残す
-  'Other'
-)
+TABLE node_kind                    -- 参照テーブル（XSD の全要素を初期データで投入）
+  kind          TEXT PRIMARY KEY   -- 'Law','LawBody','MainProvision','Article','Paragraph',...
+  category      TEXT NOT NULL      -- 'structure'|'block'|'sentence'|'inline'|'table'|'fig'|'amend'|'toc'|'appdx'|'meta'
+  is_container  BOOLEAN NOT NULL   -- 子ノードを持ち得るか
+  description   TEXT
+```
 
+XSD v3 で定義される **構造系の主要 `kind`**（カテゴリ別、抜粋）:
+
+| category | kind の例 |
+|---|---|
+| meta | `Law`, `LawNum`, `LawBody`, `LawTitle`, `EnactStatement` |
+| toc | `TOC`, `TOCLabel`, `TOCPreambleLabel`, `TOCPart`, `TOCChapter`, `TOCSection`, `TOCSubsection`, `TOCDivision`, `TOCArticle`, `TOCSupplProvision`, `TOCAppdxTableLabel` |
+| structure | `Preamble`, `MainProvision`, `Part`, `Chapter`, `Section`, `Subsection`, `Division` |
+| structure | `Article`, `ArticleTitle`, `ArticleCaption` |
+| block | `Paragraph`, `ParagraphCaption`, `ParagraphNum`, `ParagraphSentence` |
+| block | `Item`, `ItemTitle`, `ItemSentence` |
+| block | `Subitem1..10`, `Subitem1Title..Subitem10Title`, `Subitem1Sentence..Subitem10Sentence` |
+| block | `Class`, `ClassTitle`, `ClassSentence` |
+| sentence | `Sentence`, `Column`, `List`, `ListSentence`, `Sublist1`, `Sublist1Sentence`, `Sublist2`, `Sublist2Sentence`, `Sublist3`, `Sublist3Sentence` |
+| inline | `Line`, `QuoteStruct`, `ArithFormula`, `ArithFormulaNum`, `Ruby`, `Rt`, `Sup`, `Sub` |
+| table | `TableStruct`, `TableStructTitle`, `Table`, `TableRow`, `TableColumn`, `TableHeaderRow`, `TableHeaderColumn` |
+| fig | `FigStruct`, `FigStructTitle`, `Fig` |
+| fig | `StyleStruct`, `StyleStructTitle`, `Style`, `FormatStruct`, `FormatStructTitle`, `Format`, `NoteStruct`, `NoteStructTitle`, `Note` |
+| structure | `Remarks`, `RemarksLabel`, `SupplNote`, `RelatedArticleNum`, `ArticleRange` |
+| supplement | `SupplProvision`, `SupplProvisionLabel`, `SupplProvisionAppdxTable`, `SupplProvisionAppdxTableTitle`, `SupplProvisionAppdxStyle`, `SupplProvisionAppdxStyleTitle`, `SupplProvisionAppdx` |
+| appdx | `AppdxTable`, `AppdxTableTitle`, `AppdxStyle`, `AppdxStyleTitle`, `AppdxFormat`, `AppdxFormatTitle`, `Appdx`, `AppdxFig`, `AppdxFigTitle`, `AppdxNote`, `AppdxNoteTitle` |
+| amend | `AmendProvision`, `AmendProvisionSentence`, `NewProvision` |
+
+```sql
 TABLE law_node
   id                BIGSERIAL PRIMARY KEY
-  law_revision_id   FK -> law_revision NOT NULL
-  parent_id         BIGINT FK -> law_node(id)
-  kind              node_kind NOT NULL
-  ordinal           INTEGER NOT NULL              -- 同一親の中での順序
-  num               TEXT                          -- Article の Num="21_2" 等（XML属性そのまま）
-  num_int           INTEGER                       -- ソート用に主たる番号を数値化
-  caption           TEXT                          -- Caption/Title 文字列
-  title             TEXT
-  -- 構造系の属性
-  delete_flag       BOOLEAN
-  hide_flag         BOOLEAN
-  old_style         BOOLEAN
-  -- パス（elm 解決用）
-  path              LTREE NOT NULL                -- 例: MainProvision.Article_21.Paragraph_3
-  path_text         TEXT NOT NULL                 -- "MainProvision-Article_21-Paragraph_3"
-  -- 中身（葉ノード）
-  raw_xml           XML                           -- 子要素を XML 断片で保持（Sentence 内のインライン要素を保つ）
-  text_plain        TEXT                          -- 検索用プレーン
-  text_search       TSVECTOR                      -- 日本語全文検索（pgroonga 採用時は別カラム）
+  law_revision_id   VARCHAR(64)   NOT NULL REFERENCES law_revision
+  parent_id         BIGINT REFERENCES law_node(id) ON DELETE CASCADE
+  kind              TEXT          NOT NULL REFERENCES node_kind(kind)
+  ordinal           INTEGER       NOT NULL                     -- 同一親内での 0 始まり順序
+  -- 番号（Num 属性）
+  num_text          TEXT                                       -- XML の Num 属性をそのまま（"21", "21_2" など）
+  num_int           INTEGER                                    -- 主要番号（"21_2"→21）。Paragraph 等の純整数 Num も同居
+  num_branches      INTEGER[]                                  -- ["21","2"]→{21,2}。SQL ソート/比較用
+  -- タイトル・キャプション
+  caption           TEXT                                       -- ArticleCaption / ParagraphCaption
+  title             TEXT                                       -- ArticleTitle / *Title 群
+  label             TEXT                                       -- SupplProvisionLabel / RemarksLabel / TOCLabel
+  -- 構造系の属性（XSD 由来）
+  delete_flag       BOOLEAN       NOT NULL DEFAULT false       -- Article/Part/Chapter/.../Item/Subitem* の Delete
+  hide_flag         BOOLEAN       NOT NULL DEFAULT false       -- 同 Hide
+  old_style         BOOLEAN                                    -- Paragraph.OldStyle
+  old_num           BOOLEAN                                    -- Paragraph.OldNum
+  extract_flag      BOOLEAN                                    -- MainProvision/SupplProvision.Extract
+  -- Sentence 専用カラム（検索/レンダリングで頻用するため別カラム）
+  sentence_function TEXT                                       -- 'main' | 'proviso'
+  sentence_indent   TEXT                                       -- 'Paragraph'|'Item'|'Subitem1'..'Subitem10'
+  writing_mode      TEXT                                       -- 'vertical'|'horizontal'
+  -- SupplProvision 専用
+  suppl_type        TEXT                                       -- 'New' | 'Amend'
+  amend_law_num     TEXT
+  -- Fig 専用
+  fig_src           TEXT                                       -- attached_file への外部キー検索キー（src は ./pict/... 相対）
+  -- TableColumn 専用（疎なカラム）
+  rowspan           INTEGER
+  colspan           INTEGER
+  border_top        TEXT
+  border_bottom     TEXT
+  border_left       TEXT
+  border_right      TEXT
+  align             TEXT                                       -- left/center/right/justify
+  valign            TEXT                                       -- top/middle/bottom
+  -- レア属性 / インライン要素 (Ruby Rt, Sentence の Num 以外の属性) の格納
+  attrs             JSONB         NOT NULL DEFAULT '{}'        -- 他の XML 属性すべて
+  -- 中身（葉ノードの XML 断片）
+  raw_xml           XML                                        -- Sentence の混在内容、QuoteStruct の任意 XML、ArithFormula 等を原文保持
+  text_plain        TEXT                                       -- インライン要素を剥がしたプレーンテキスト（検索とハイライト用）
+  -- パス（elm パラメータの解決用）
+  path              LTREE         NOT NULL                     -- 例: MainProvision.Article_21.Paragraph_3.Item_2
+  path_text         TEXT          NOT NULL                     -- 例: "MainProvision-Article_21-Paragraph_3-Item_2"
+  depth             SMALLINT      NOT NULL                     -- 0=Law
+  -- 検索
+  text_search       TSVECTOR                                   -- 日本語 tsvector（pgroonga 採用時は別カラム pgroonga_text）
   UNIQUE (law_revision_id, path)
   INDEX USING GIST (path)
-  INDEX USING GIN (text_search)
+  INDEX (law_revision_id, parent_id, ordinal)
   INDEX (law_revision_id, kind, num_int)
+  INDEX USING GIN (text_search)
+  INDEX USING GIN (attrs jsonb_path_ops)
 ```
 
 設計上のポイント:
 
-1. **隣接リスト + ltree**: `parent_id` で厳密ツリー、`path` (`ltree`) で `elm` の高速検索。`elm=MainProvision-Article_21-Paragraph_3` は `path ~ 'MainProvision.Article_21.Paragraph_3.*'` に変換。
-2. **属性は要素種別ごとに必要なものだけカラム化**。Sentence の `WritingMode`、`Paragraph` の `Num`、`AmendLawNum`、`Extract` などは API で個別フィールド化されるため `attrs JSONB` を追加で持つ（下記）。
-3. **インライン要素は分解しない**：`<Ruby>` `<Sup>` `<Sub>` `<Line>` `<QuoteStruct>` などは原文 XML に残し、`text_plain` でプレーン化。検索とレンダリングの両方を保つ。
-4. **AppdxTable / AppdxFig / Fig は `attached_file` と双方向参照**。
+1. **隣接リスト + ltree**: `parent_id` で厳密ツリー、`path` (`ltree`) で `elm` の高速検索。`elm=MainProvision-Article_21-Paragraph_3` は `path <@ 'MainProvision.Article_21.Paragraph_3'` で O(log N) サブツリー取得。
+2. **`num_branches INTEGER[]`** で枝番（"21_2_3"→{21,2,3}）を表現し、`ORDER BY num_branches` で **辞書順ではなく数値順**に並ぶ。`num_int` は最上位番号で簡易ソート・絞り込み用。
+3. **`Paragraph.Num` は positiveInteger、`Article.Num`/`Item.Num`/`Subitem*.Num` は文字列**。両者を `num_text` (原文) + `num_int`/`num_branches` (派生) で受ける統一カラム設計とする。
+4. **頻用属性は専用カラム**にして検索性能と可読性を確保（Sentence 系・SupplProvision 系・TableColumn 系・Fig 系）。それ以外の XSD 属性（Ruby の振り仮名、ArithFormula のキャプション等）は `attrs JSONB` に追い込み、GIN インデックスで横断検索可能にしておく。
+5. **インライン要素は分解しない**: `Ruby`/`Sup`/`Sub`/`Line`/`QuoteStruct`/`ArithFormula` は **Sentence の `raw_xml` に保持**し、`text_plain` でプレーン化して検索に供する。これにより XML 復元時に元の混在内容を完全再現できる。
+6. **`QuoteStruct` は `xs:any`** のため、子要素を `law_node` 化せず raw XML の塊として保持するのが現実解。ただし内部に被改正法令断片が入る場合があるため、別 `quote_extract` テーブルで関連法令 ID を抽出記録するオプションを残す。
+7. **AppdxTable / AppdxFig / Fig は `attached_file` と接続**: `law_node.fig_src` に `Fig.src` 値（`./pict/M06SE065-001.jpg` 等）を入れ、`attached_file(law_revision_id, src)` に join できる。
+8. **AmendProvision / NewProvision は通常ノードとして再帰格納**: XSD で再帰スキーマになっているため、`law_node` に通常通り格納すれば自然にツリーが組める。検索時には `kind='AmendProvision'` でフィルタ可能。`omit_amendment_suppl_provision=true` は `path` に `SupplProvision` を含み `suppl_type='Amend'` のサブツリーを除外する。
+
+### 4.7.1 `elm` パスの組み立て規則
+
+`law_node.path` は **ltree ラベル** で構築する。ラベルは以下の規則:
+
+- `Num` 属性なしの要素: `kind` そのまま（例: `MainProvision`, `Preamble`, `TOC`）。
+- `Num` 属性ありの要素: `kind_Num`（例: `Article_21`, `Paragraph_3`, `Item_2`, `Subitem1_1`）。
+- 枝番は `_` 区切りで保持: `Article_21_2`（XML の `Num="21_2"`）。
+- `[1]` 形式（API ドキュメント例の `Preamble[1]`, `SupplProvision[1]`）は **`ordinal` カラム**で表現し、外向け文字列としては `kind` のあと `[ordinal+1]` を組み立てる。
+- ltree のラベル制約（英数字とアンダースコア）を満たすため、枝番は `_` 区切りに正規化。
+- 外向け表記（`path_text`）は **`-` 区切り** で API ドキュメント表記に揃える。
 
 ```
-TABLE law_node_attr  -- 大量のレア属性を別出し（任意）
-  node_id           FK -> law_node ON DELETE CASCADE
-  key               TEXT
-  value             TEXT
-  PRIMARY KEY (node_id, key)
+内部 ltree:      MainProvision.Article_21_2.Paragraph_3.Item_2.Subitem1_1
+外向け path_text: MainProvision-Article_21_2-Paragraph_3-Item_2-Subitem1_1
 ```
-
-実用上は `law_node.attrs JSONB` ひとつで十分なケースが多いため、属性は **`JSONB` 列に集約**してインデックスを必要に応じて式インデックスで張る運用を推奨。
 
 ### 4.8 添付ファイル
 
@@ -414,8 +466,12 @@ LIMIT :limit OFFSET :offset;
 ## 10. 未確定事項（要確認）
 
 1. **添付ファイルの保存先**: DB BYTEA か、S3/MinIO か。
-2. **全文検索エンジン**: pgroonga 採用可否（運用負荷・PGUS 拡張インストールの可否）。
+2. **全文検索エンジン**: pgroonga 採用可否（運用負荷・PG拡張インストールの可否）。
 3. **html/rtf/docx ファイル形式**の生成: e-Gov 同等の見た目を再現するか、簡易版で良いか。
 4. **キャッシュ層**: CDN / Redis を間に挟むか。
 5. **更新頻度**: 日次 1 回で十分か、もっと細かいか。
 6. **既存改正法令の参照整合性**: `amendment_law_id` が `law` テーブルに存在しないケース（旧法令）の扱い。
+7. **`QuoteStruct` の取り扱い深度**: `xs:any` の中身まで構造分解するか、不透明 XML として保持するか。検索ヒット位置の精度に影響。
+8. **`AmendProvision` ツリーのレンダリング**: 改正条文を `law_node` に通常ノードとして格納するが、`/law_data` レスポンスで「改正部分を畳む」UI 要件があるか。
+9. **JSON（詳細版/簡易版）の差分**: `json_format=light` 時に「インライン要素はテキスト埋め込み、属性は `AmendLawNum`/`Extract`/`Paragraph.Num` のみフィールド化」というルールを `rendering` 層で正確に再現する必要がある。
+10. **XSD バージョン管理**: 法令標準 XML スキーマがバージョンアップした際の `node_kind` 追加運用（Alembic でマスタ追加リビジョンを作る方針で良いか）。
