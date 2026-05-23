@@ -37,6 +37,7 @@ laws-api-mirror/
 │   └── core/               # 設定・ロギング・例外
 └── docs/
     ├── design/             # 本設計ドキュメント（章ごとに分割）
-    └── guides/             # 補助解説ドキュメント（例: testcontainers.md）
+    ├── guides/             # 補助解説ドキュメント（例: testcontainers.md）
+    └── tests/              # テストケース設計（例: api-test-cases.md）
 ```
 
