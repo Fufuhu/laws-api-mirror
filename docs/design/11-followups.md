@@ -220,9 +220,14 @@ async def daily_delta(timestamp: int) -> None:
 - DLQ 相当: `procrastinate_jobs.status = 'failed'` の行を別 view で抽出し、Web UI から再投入できるエンドポイントを用意。
 - 観測: `procrastinate_jobs` を Grafana / Metabase に接続。
 
-### 11.8 既存改正法令の参照整合性（方針 C 採用確定）
+### 11.8 既存改正法令の参照整合性（方針 C + D 採用確定）
 
-**結論**: **方針 C（独立 `amendment_law` テーブル）＋ 方針 D（Lazy reconciliation）**を採用する。データモデルは §4.5 に反映済み。本節は選定経緯と残課題の整理。
+**結論**: **方針 C（独立 `amendment_law` テーブル）と方針 D（Lazy reconciliation）の両方を採用する**。
+
+- **方針 C**: データモデルは §4.5 に反映済み（`amendment_law` テーブル、`linked_law_id` による Lazy Linking）。
+- **方針 D**: `linked_law_id` を `law` と再突合する Procrastinate ジョブを継続運用する。`law_revision.amendment_law_id` の整合性は **取り込み時点では DB レベルで保証しない**（プレースホルダ挿入を許容）が、**Lazy reconciliation ジョブによって時間とともに整合性が回復**する設計。
+
+本節は選定経緯と残課題の整理。
 
 **論点（§10-6）**: `law_revision.amendment_law_id` は「この履歴に対応する改正を行った法令の law_id」を指すが、**改正法令そのものが `law` テーブルに存在しないケース**が一定数発生する。
 
