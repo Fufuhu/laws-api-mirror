@@ -127,7 +127,11 @@ TABLE amendment_law
 2. **`law_revision.amendment_law_id` は `amendment_law` への FK**（NOT NULL を原則とする。新規制定 (`mission=New`) で改正元がない履歴の扱いは要確認: 自己参照プレースホルダを置くか NULL 許容にするか）。
 3. **取り込み順序**: `law_revision` を投入する前に、`amendment_law` 行を UPSERT（プレースホルダ挿入を許容）。法令本体（`law`）の有無に依存しないので、被改正法令の取り込みが先行しても安全。
 4. **API レスポンス組立**: `law_revision LEFT JOIN amendment_law LEFT JOIN law ON law.law_id = amendment_law.linked_law_id` の 2 段 LEFT JOIN で `amendment_law_id` / `amendment_law_title` / `amendment_law_num` を返却。e-Gov の `revision_info` 構造と 1:1 対応。
-5. **Lazy reconciliation**: Procrastinate の `@periodic` ジョブが `amendment_law` を走査し、`linked_law_id IS NULL` のものを `law` と再突合（§11.8、§11.7 と整合）。
+5. **Lazy reconciliation**（方針 D）: Procrastinate のジョブが `amendment_law` を走査し、`linked_law_id IS NULL` の行を `law` と再突合する。トリガは以下のいずれか:
+   - 差分取り込みジョブの完了直後（chain）
+   - 全件取り込みジョブの完了直後（chain）
+   - 安全網としての `@periodic`（例: 日次 04:00）
+   - 突合は `amendment_law.amendment_law_id = law.law_id` の単純な等価結合で、ヒットした行の `linked_law_id` を更新する。詳細は §11.8。
 6. **`last_seen_at`**: 取り込みのたびに更新。長期間更新されない `amendment_law` 行は失効候補としてレビュー対象にする。
 
 #### 4.5.1 多対多関係
