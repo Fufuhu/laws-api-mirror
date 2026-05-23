@@ -1,5 +1,7 @@
 ## 7. API 設計（v2 互換）
 
+具体的なエンドポイント別テストケース（同値分割・境界値分析）は [`docs/tests/api-test-cases.md`](../tests/api-test-cases.md) を参照。
+
 ### 7.1 ベースパス
 
 `/api/2/` を維持（e-Gov クライアントがそのまま使えるようにする）。
