@@ -24,11 +24,18 @@ laws-api-mirror/
 │   │   ├── downloader.py   # bulkdownload からの取得
 │   │   ├── xml_parser.py   # 法令XML → 中間DTO
 │   │   ├── loader.py       # 中間DTO → RDB（UPSERT）
-│   │   └── tasks.py        # ジョブ定義
-│   ├── search/             # キーワード検索（pgroonga or tsvector）
+│   │   └── attachments.py  # 添付ファイルの S3 アップロード
+│   ├── jobs/               # Procrastinate アプリ・タスク定義（§11.7）
+│   │   ├── app.py          # Procrastinate App 初期化
+│   │   ├── ingest.py       # 取り込みタスク（@task / @periodic）
+│   │   └── reconciliation.py  # amendment_law の Lazy reconciliation (§11.8)
+│   ├── search/             # キーワード検索（pg_bigm + tsvector ハイブリッド、§5）
+│   │   ├── query_parser.py # 検索式 AST 化
+│   │   └── engine.py       # pg_bigm / tsvector エンジンアダプタ
+│   ├── storage/            # オブジェクトストレージ（AWS S3 / SeaweedFS）クライアント
 │   ├── rendering/          # DB → 法令XML / JSON（詳細版/簡易版）の再構築
 │   └── core/               # 設定・ロギング・例外
 └── docs/
-    └── design.md           # 本ファイル
+    └── design/             # 本設計ドキュメント
 ```
 
