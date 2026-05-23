@@ -69,14 +69,11 @@ TABLE law_revision
   abbrev            TEXT
   category_cd       FK -> category(cd)        -- 主分類
   updated_at_source TIMESTAMPTZ               -- API の updated
-  amendment_promulgate_date DATE
   amendment_enforcement_date DATE
   amendment_enforcement_comment TEXT
   amendment_scheduled_enforcement_date DATE
-  amendment_law_id  TEXT                      -- e-Gov 側の改正法令 ID 文字列
-  amendment_law_title TEXT
-  amendment_law_title_kana TEXT
-  amendment_law_num TEXT
+  amendment_law_id  VARCHAR(15) REFERENCES amendment_law(amendment_law_id)
+                                              -- 改正法令メタは amendment_law へ正規化（§4.5）
   amendment_type    FK -> amendment_type
   repeal_status     FK -> repeal_status
   repeal_date       DATE
@@ -105,17 +102,38 @@ TABLE law_revision_category
   PRIMARY KEY (law_revision_id, category_cd)
 ```
 
-### 4.5 改正関係
+### 4.5 改正法令メタ（`amendment_law`）
+
+`law_revision` から改正法令の属性を切り出し、独立テーブル `amendment_law` に正規化する。**`law` テーブルへの厳格 FK は持たず**、後から該当改正法令が `law` に投入された際に `linked_law_id` で紐付ける Lazy Linking 方式（方針 C、§11.8 で確定）。
 
 ```
-TABLE amendment_relation
-  amended_revision_id    FK -> law_revision(law_revision_id)  -- 被改正側
-  amending_law_id        VARCHAR(15)                          -- 改正法（law が無い場合もあるため FK 化は緩く）
-  amending_law_title     TEXT
-  amending_law_num       TEXT
-  amendment_type         FK -> amendment_type
-  PRIMARY KEY (amended_revision_id, amending_law_id)
+TABLE amendment_law
+  amendment_law_id          VARCHAR(15) PRIMARY KEY      -- 例: 506CO0000000161（law_id と同一形式の 15 桁）
+  amendment_law_title       TEXT
+  amendment_law_title_kana  TEXT
+  amendment_law_num         TEXT
+  amendment_promulgate_date DATE
+  linked_law_id             VARCHAR(15) REFERENCES law(law_id) ON DELETE SET NULL
+                                                          -- 後付け解決。NULL のままでも運用可能
+  first_seen_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+  last_seen_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+  INDEX (linked_law_id)
+  INDEX (amendment_promulgate_date)
 ```
+
+設計ポイント:
+
+1. **`law` への厳格 FK を避ける**: e-Gov のデータ整備対象（平成 29 年 4 月 1 日以降）外にある改正法令の `amendment_law_id` も受け入れる。`linked_law_id` は `law` への参照だが NULL 許容で、後から Lazy reconciliation ジョブが埋める。
+2. **`law_revision.amendment_law_id` は `amendment_law` への FK**（NOT NULL を原則とする。新規制定 (`mission=New`) で改正元がない履歴の扱いは要確認: 自己参照プレースホルダを置くか NULL 許容にするか）。
+3. **取り込み順序**: `law_revision` を投入する前に、`amendment_law` 行を UPSERT（プレースホルダ挿入を許容）。法令本体（`law`）の有無に依存しないので、被改正法令の取り込みが先行しても安全。
+4. **API レスポンス組立**: `law_revision LEFT JOIN amendment_law LEFT JOIN law ON law.law_id = amendment_law.linked_law_id` の 2 段 LEFT JOIN で `amendment_law_id` / `amendment_law_title` / `amendment_law_num` を返却。e-Gov の `revision_info` 構造と 1:1 対応。
+5. **Lazy reconciliation**: Procrastinate の `@periodic` ジョブが `amendment_law` を走査し、`linked_law_id IS NULL` のものを `law` と再突合（§11.8、§11.7 と整合）。
+6. **`last_seen_at`**: 取り込みのたびに更新。長期間更新されない `amendment_law` 行は失効候補としてレビュー対象にする。
+
+#### 4.5.1 多対多関係
+
+1 つの改正法令が複数の被改正法令の複数履歴に紐づくのは、`law_revision.amendment_law_id` の N:1 関係で表現される。明示的な M2M テーブルは不要（`amendment_law` 1 つに対して `law_revision` 複数行）。
+
 
 ### 4.6 法令本文（生 XML 保存）
 
