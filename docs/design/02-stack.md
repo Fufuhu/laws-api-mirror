@@ -9,7 +9,7 @@
 | ORM | SQLAlchemy 2.x（async） | `asyncpg` ドライバ |
 | マイグレーション | Alembic | autogenerate を活用、ただしレビュー必須 |
 | XML パース | `lxml`（iterparse でストリーミング） | 1 法令あたり XML が大きいため SAX 風処理 |
-| ジョブ | Arq / RQ / Celery いずれか | 一括取り込みは長時間化するため別プロセス |
+| ジョブ | Procrastinate（PostgreSQL `LISTEN/NOTIFY` ベース） | Redis は使用しない。詳細は §11.7 |
 | Lint/Format | Ruff + mypy | |
 | テスト | pytest + pytest-asyncio + testcontainers (Postgres) | |
 
@@ -62,13 +62,15 @@
 - **エンコード堅牢性**: 法令データには稀に外字（私用領域）や全角制御文字が含まれる。`lxml` は `recover=True` で部分復元できる。
 - **代替検討**: 標準 `xml.etree` は遅く、XSD 検証も別実装必要。`xmltodict` は属性と要素の区別が曖昧で法令XMLには不向き。
 
-### 2.8 ジョブ: Arq / RQ / Celery
+### 2.8 ジョブキュー: Procrastinate
 
-- **要件**: 一括取り込み（数十分〜数時間）、差分取り込み（日次・数分）、添付ファイル展開、検索インデックス再構築。リトライ・キャンセル・進捗可視化が欲しい。
-- **Arq（推奨）**: Redis ベース・async ネイティブで FastAPI と同じイベントループに乗る。シンプルで本プロジェクト規模に合う。
-- **RQ**: 同期前提。今回 async I/O の比率が高いため不利。
-- **Celery**: 最も枯れているが、Broker（Redis/RabbitMQ）＋ Result Backend ＋ Beat と構成要素が多く、初期投資が大きい。要件が増えたら移行。
-- **代替**: pg ベースのキュー（`pgmq`、`procrastinate`）は Redis を増やしたくない場合の選択肢。
+- **要件**: 一括取り込み（数十分〜数時間）、差分取り込み（日次・数分）、添付ファイル展開、検索インデックス再構築。リトライ・キャンセル・進捗可視化が欲しい。async ネイティブが必須。
+- **採用**: **Procrastinate**（Doctolib 製、PostgreSQL `LISTEN/NOTIFY` ベース）。Redis は使用しない方針と一致し、追加ミドルウェアなしで運用できる。async ネイティブ、cron / 再試行が標準機能。詳細な選定経緯は §11.7。
+- **不採用**:
+  - **Arq**: Redis 専用設計でバックエンド差し替え不可。
+  - **RQ**: 同期前提。
+  - **Celery**: Broker（Redis/RabbitMQ）＋ Result Backend ＋ Beat と構成要素が多く、初期投資が大きい。
+  - **AWS SQS + 自前ワーカー**: 観測性とローカル開発容易性で Procrastinate に劣るため不採用。将来サーバーレス化が必要になれば再検討。
 
 ### 2.9 Lint / Format: Ruff + mypy
 
