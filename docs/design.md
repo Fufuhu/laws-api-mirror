@@ -366,11 +366,53 @@ TABLE ingest_law_event
 
 - 法令メタの絞り込み（種別・分類・公布日範囲）は B-tree 複合インデックスで十分。
 - `asof` クエリは `enforcement_period @> :asof` + GIST。
-- キーワード検索は以下のいずれか:
-  - **採用候補 A**: `pgroonga`（日本語形態素・N-gram 両対応、`pgroonga_match_positions_byte` でハイライト座標）。
-  - **採用候補 B**: PostgreSQL 標準 `tsvector` + `textsearch_ja`（MeCab）。
-  - e-Gov 仕様の `*` `?` ワイルドカードと AND/OR/NOT は **検索式パーサで pgroonga クエリへ変換**するのが現実的。
-- 検索のヒット位置（`position` フィールド）は **`law_node`単位**で返すため、`law_node.path_text` をそのまま返却可能。
+- キーワード検索エンジンは未確定。以下の 3 候補をサイドバイサイドで併記し、PoC で比較する。検索のヒット位置（`position` フィールド）は **`law_node` 単位**で返すため、いずれの方式でも `law_node.path_text` をそのまま返却可能。
+
+### 5.1 全文検索エンジン比較
+
+| 観点 | (A) pg_bigm | (B) pgroonga | (C) tsvector + textsearch_ja (MeCab) |
+|---|---|---|---|
+| 索引方式 | 2-gram（bigram）GIN | N-gram + 形態素 | 形態素 |
+| 部分一致 `LIKE '%...%'` 加速 | ◎ | ◎ | △（形態素単位） |
+| ワイルドカード `*` / `?` | ◎ LIKE/正規表現に直接マッピング | ○ | △ |
+| AND / OR / NOT | ◎ LIKE の論理結合 | ◎ クエリ言語 | ◎ `tsquery` |
+| 1 文字クエリ | × フルスキャンへフォールバック | ○ | ○ |
+| ハイライト座標 | × 自前算出（`re.finditer` 等） | ◎ `pgroonga_match_positions_byte` | ○ `ts_headline` |
+| スコアリング | × | ◎ | ◎ |
+| 辞書メンテ | 不要 | 不要 | 必要（MeCab/ipadic） |
+| 拡張入手性 | ◎ 主要マネージドPG（AWS RDS/Aurora/Cloud SQL/Azure 等）で利用可 | △ 利用可能環境が限定 | ◎ 標準 |
+| 運用負荷 | 低 | 中 | 高 |
+
+### 5.2 採用判断のポイント
+
+- **e-Gov 仕様との親和性**: キーワード API は「部分一致＋ワイルドカード＋AND/OR/NOT」が中心で、スコアリングは使われない（`order` は `law_info`/`revision_info` のフィールド指定）。**(A) pg_bigm** の特性とよく噛み合う。
+- **ハイライト**: e-Gov のレスポンスはヒット部分を `<span>` で囲うだけの単純仕様。pg_bigm の場合は `law_node.text_plain` に対して Python 側で `re.finditer` してオフセットを計算すれば十分（条文単位＝通常 100〜数百文字なので軽い）。本格的な `ts_headline` 相当が必要なら (B) を選ぶ。
+- **1 文字クエリ**: e-Gov 仕様の `第?条` のように 1 文字ワイルドカードを含む式でも、固定文字部分（"第", "条"）が 2 文字以上あれば bigram で絞り込めるため、pg_bigm でも実害は小さい想定。ただし PoC で性能確認が必要。
+- **環境依存**: 本番運用がマネージド DB 前提なら (A)/(C) が安全。自前 Postgres を立てるなら (B) も選択肢。
+
+### 5.3 共通設計
+
+検索対象は `law_node.text_plain` 列。採用エンジンに応じて以下のカラム／インデックスを追加する。
+
+```sql
+-- (A) pg_bigm 採用時
+CREATE EXTENSION IF NOT EXISTS pg_bigm;
+CREATE INDEX law_node_text_bigm_idx
+  ON law_node USING gin (text_plain gin_bigm_ops);
+
+-- (B) pgroonga 採用時
+CREATE EXTENSION IF NOT EXISTS pgroonga;
+CREATE INDEX law_node_text_pgroonga_idx
+  ON law_node USING pgroonga (text_plain);
+
+-- (C) tsvector 採用時
+ALTER TABLE law_node ADD COLUMN text_search tsvector;
+CREATE INDEX law_node_text_search_idx
+  ON law_node USING gin (text_search);
+-- text_search はトリガで更新（to_tsvector('japanese', text_plain)）
+```
+
+検索式（AND/OR/NOT、ワイルドカード）は `search.query_parser` モジュールで AST 化し、採用エンジンに応じた SQL/関数呼び出しへ変換する責務分離とする。エンジン差し替えが API 層に漏れない構造にしておく。
 
 ## 6. Alembic 運用
 
@@ -466,7 +508,7 @@ LIMIT :limit OFFSET :offset;
 ## 10. 未確定事項（要確認）
 
 1. **添付ファイルの保存先**: DB BYTEA か、S3/MinIO か。
-2. **全文検索エンジン**: pgroonga 採用可否（運用負荷・PG拡張インストールの可否）。
+2. **全文検索エンジン**: §5.1 の 3 候補（pg_bigm / pgroonga / tsvector+MeCab）から PoC で選定。マネージド DB の拡張サポート状況・1 文字クエリの頻度・ハイライト要件の重さで決定。
 3. **html/rtf/docx ファイル形式**の生成: e-Gov 同等の見た目を再現するか、簡易版で良いか。
 4. **キャッシュ層**: CDN / Redis を間に挟むか。
 5. **更新頻度**: 日次 1 回で十分か、もっと細かいか。
