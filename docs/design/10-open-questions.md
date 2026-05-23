@@ -11,5 +11,11 @@
    - (a) `omit_amendment_suppl_provision=true` のサポート（`SupplProvision.Type='Amend'` のサブツリーを除外する SQL）
    - (b) AmendProvision / NewProvision ノードはそのまま JSON/XML レスポンスに含める（DB に格納した `law_node` を素直に返却）
    - 追加のレンダリング機能（改正指示と新条文の視覚的識別フラグ、改正前後差分生成 など）は **1st リリース対象外**。検討メモは §11.4 に残置。
-9. **JSON（詳細版/簡易版）の差分**: `json_format=light` 時に「インライン要素はテキスト埋め込み、属性は `AmendLawNum`/`Extract`/`Paragraph.Num` のみフィールド化」というルールを `rendering` 層で正確に再現する必要がある。
+9. ~~**JSON（詳細版/簡易版）の差分**~~ → **確定**: 1st リリースは **インタフェース互換のみ維持**する。
+   - `json_format=full` / `light` の両方を受け付け、レスポンスは仕様で定められた**形状**（`full` は `{tag, attr, children}` ツリー、`light` は `{TagName: value or array}`）で返す。
+   - レスポンスの **詳細内容（インライン要素の埋め込み表記、`light` でフィールド化する属性の選び方等）は、最も実装が容易な方針**を採用する。e-Gov 実 API とのバイト単位一致は目指さない。
+   - 想定実装:
+     - `full`: `law_node` ツリー（`raw_xml` を含む）から機械的に `{tag, attr, children}` を生成。
+     - `light`: 構造ノードは `{TagName: [...]}` で再帰、インライン要素は `text_plain` をそのまま埋め込み、属性は API ドキュメントに明示された `AmendLawNum` / `Extract` / `Paragraph.Num` のみフィールド化、その他は破棄。
+   - 厳密準拠のためのエッジケース（Ruby の括弧表記、ArithFormula のテキスト化、属性出力位置 等）は §11.11 に検討メモを残置し、必要に応じて将来リリースで合わせ込む。
 10. **XSD バージョン管理**: 法令標準 XML スキーマがバージョンアップした際の `node_kind` 追加運用（Alembic でマスタ追加リビジョンを作る方針で良いか）。
