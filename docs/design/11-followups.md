@@ -315,7 +315,15 @@ amendment_law_id VARCHAR(15) REFERENCES amendment_law(amendment_law_id)
 - Lazy reconciliation ジョブ（Procrastinate `@task` 化）の実装方針
 - 新規制定法令の `amendment_law_id` 扱いに関する最終決定メモ
 
-### 11.9 `QuoteStruct` の取り扱い深度
+### 11.9 `QuoteStruct` の取り扱い深度（方針 D 採用確定）
+
+**結論**: **方針 D（A → C への段階導入）を採用する**。
+
+- **初期リリース**は方針 A（QuoteStruct を不透明 XML として `law_node` 1 ノードに保持、`raw_xml` + `text_plain`）でリリース。§4.7 の既存方針と一致。
+- **後段**で §11.5「引用関係の抽出」と連動して方針 C の `quote_extract` テーブルを追加し、引用先法令へのリンクと細粒度な検索を実現する。
+- 方針 B（完全構造化）は本文 `law_node` ツリーの清潔性を損なうため不採用。
+
+本節は選定経緯と残課題の整理。
 
 **論点（§10-7）**: 法令標準 XML スキーマ v3 において `QuoteStruct` は `xs:any` 型で定義されており、任意の XML を内包できる。実データでは **被改正法令の条文断片や、他法令の引用条文**が入る。これをどこまで構造化するかは、検索の粒度・ストレージ・パース処理コスト・XSD 変化への耐性のトレードオフとなる。
 
@@ -382,11 +390,9 @@ amendment_law_id VARCHAR(15) REFERENCES amendment_law(amendment_law_id)
 | XSD 変化への耐性 | ◎ | △ | ◎ | ◎ |
 | `/law_data` レンダリング | ◎ XML 埋め戻し | △ 再構築ロジック必要 | ◎ | ◎ |
 
-#### 11.9.3 推奨
+#### 11.9.3 採用決定（方針 D）
 
-**第1候補: 方針 D（A → C への段階導入）**
-
-理由:
+決定理由:
 
 1. 初期リリースは方針 A で最速に立ち上げられる（§4.7 にすでに「不透明 XML として保持」と記載済み）。
 2. §11.5「引用関係の抽出」と自然に統合できる。
