@@ -36,6 +36,7 @@ laws-api-mirror/
 │   ├── rendering/          # DB → 法令XML / JSON（詳細版/簡易版）の再構築
 │   └── core/               # 設定・ロギング・例外
 └── docs/
-    └── design/             # 本設計ドキュメント
+    ├── design/             # 本設計ドキュメント（章ごとに分割）
+    └── guides/             # 補助解説ドキュメント（例: testcontainers.md）
 ```
 
