@@ -13,3 +13,72 @@
 | Lint/Format | Ruff + mypy | |
 | テスト | pytest + pytest-asyncio + testcontainers (Postgres) | |
 
+§5（全文検索）も併せて参照。検索エンジン（pg_bigm / pgroonga / tsvector）は別途 PoC 後に確定。
+
+### 2.1 言語: Python 3.12+
+
+- **型ヒントの成熟**: 3.12 で導入された `type` 文・PEP 695 ジェネリクスにより、SQLAlchemy 2.x の型推論や Pydantic v2 の `TypeAdapter` と相性が良い。法令XML→DTO→ORM→APIスキーマの 4 段で型を通したい本プロジェクトでは重要。
+- **`asyncio` 安定性**: `TaskGroup`・`except*`（PEP 654）を素直に書ける。取り込みパイプラインで法令単位の並行処理を回す際に有効。
+- **下限の根拠**: e-Gov 法令データは年代物の漢字（外字含む）を扱う。`unicodedata` の Unicode 15.0 対応バージョンを引きたい。
+
+### 2.2 パッケージ管理: uv（推奨） / Poetry
+
+- **uv（第1候補）**: Rust 製で `pip install`/`venv`/`pip-tools` 相当を一括で速い。`uv.lock` をリポジトリに固定して再現性確保。CI のセットアップが最短になる。
+- **Poetry（第2候補）**: 採用実績が多く、社内既存ツールチェインに合わせる場合に選択。
+- **避けたい**: 素の `pip` + `requirements.txt`（依存解決が貧弱で本プロジェクト規模では運用負荷が高い）。
+
+### 2.3 Web: FastAPI + Uvicorn / Gunicorn
+
+- **FastAPI**: e-Gov v2 仕様は **クエリパラメータが 14 個前後で型と enum が厳密**（`law_num_era=Showa` など）。FastAPI + Pydantic v2 で `StrEnum`/`Literal` を使えば、Swagger と一致する API ドキュメントが自動生成され、`response_format=json|xml` の content negotiation も `Response` クラスで素直に書ける。
+- **Uvicorn**: 開発・単体プロセスのデフォルト。`--reload` で DX が良い。
+- **Gunicorn + UvicornWorker**: 本番でのプロセス多重化（`--workers` でコア数並列）。グレースフルリスタート・タイムアウト制御が標準装備。
+- **代替検討**: Starlette 単体は OpenAPI 自動生成が無いため不採用。Litestar は速度メリットがあるが、本プロジェクトのボトルネックは DB I/O のため誤差。
+
+### 2.4 DB: PostgreSQL 16
+
+- **JSONB + GIN**: `law_node.attrs` のレア XML 属性を式インデックス可能。
+- **`ltree` 拡張**: §4.7.1 の `elm` パス解決を `<@`/`~` で O(log N) 化。
+- **`daterange` + `EXCLUDE` 制約**: `law_revision.enforcement_period` の重複防止を制約で表現できる（アプリ側ロジック不要）。
+- **`tsvector` 標準装備**: `GENERATED ALWAYS AS ... STORED` が 12 以降で使え、検索カラムをトリガなしで自動同期できる。
+- **拡張入手性**: `pg_bigm` / `pgroonga` ともマネージド対応有無に差があるため、§5 で再検討。
+- **バージョン根拠**: 16 はメジャー LTS 相当で `pg_stat_io` 等の運用観測が強化。15 以下は不採用。
+
+### 2.5 ORM: SQLAlchemy 2.x (async) + asyncpg
+
+- **SQLAlchemy 2.x 一択**: 1.x スタイルの暗黙セッションを脱却し、`Mapped[T]` による型注釈ベースのモデル定義に統一。Pydantic v2 と組み合わせて DTO ↔ ORM の境界を型で守れる。
+- **`asyncpg`**: ピュア Python の `psycopg`（psycopg3）と比較してバイナリ転送・パイプライン化で高速。法令本文の `COPY` 投入時の差が大きい。
+- **生 SQL 併用**: `law_node` の階層クエリや `ltree` 操作は SQLAlchemy Core の `text()` でテンプレ化する方が読みやすい局面が多い。ORM を強制しない方針。
+
+### 2.6 マイグレーション: Alembic
+
+- **autogenerate の限界**: `EXCLUDE` 制約、`GENERATED` 列、`tsvector` インデックス、`ltree`/`pg_bigm`/`pgroonga` の `CREATE EXTENSION` は **autogenerate で検出されないことが多く、手書き必須**。
+- **データ移行同梱**: `node_kind`、`category`、`era`、`law_type` 等のマスタデータ投入はリビジョン内で `op.bulk_insert` 実施。XSD バージョンアップ時の追加要素はマスタ追記リビジョンで対応（§10 参照）。
+- **オフラインモード**: `alembic upgrade --sql` で DBA レビュー可能な SQL を出力できるため、本番反映前のレビュー手段を確保。
+
+### 2.7 XML パース: lxml (iterparse)
+
+- **メモリ効率**: 大きな法令（民法・刑法・各種税法）は XML が数 MB〜十数 MB。`xml.etree.ElementTree.parse` で全 DOM を作るとピーク使用量が問題になる。`lxml.etree.iterparse` で SAX 風に逐次パースし、`law_node` を子要素単位で `COPY` バッファに流す。
+- **XSD 検証**: 取り込み時に `lxml.etree.XMLSchema` で **`XMLSchemaForJapaneseLaw_v3.xsd` の妥当性検証**を通す。不正な XML を DB に投入しない防壁。
+- **エンコード堅牢性**: 法令データには稀に外字（私用領域）や全角制御文字が含まれる。`lxml` は `recover=True` で部分復元できる。
+- **代替検討**: 標準 `xml.etree` は遅く、XSD 検証も別実装必要。`xmltodict` は属性と要素の区別が曖昧で法令XMLには不向き。
+
+### 2.8 ジョブ: Arq / RQ / Celery
+
+- **要件**: 一括取り込み（数十分〜数時間）、差分取り込み（日次・数分）、添付ファイル展開、検索インデックス再構築。リトライ・キャンセル・進捗可視化が欲しい。
+- **Arq（推奨）**: Redis ベース・async ネイティブで FastAPI と同じイベントループに乗る。シンプルで本プロジェクト規模に合う。
+- **RQ**: 同期前提。今回 async I/O の比率が高いため不利。
+- **Celery**: 最も枯れているが、Broker（Redis/RabbitMQ）＋ Result Backend ＋ Beat と構成要素が多く、初期投資が大きい。要件が増えたら移行。
+- **代替**: pg ベースのキュー（`pgmq`、`procrastinate`）は Redis を増やしたくない場合の選択肢。
+
+### 2.9 Lint / Format: Ruff + mypy
+
+- **Ruff**: Black / isort / flake8 / pyupgrade を 1 ツールで代替。CI 実行が秒で終わるため pre-commit に組み込みやすい。
+- **mypy**: SQLAlchemy 2.x の `Mapped[T]`、Pydantic v2、FastAPI ハンドラの型を end-to-end で検証。`strict = true` を初期設定とする。
+- **代替検討**: pyright は速度面で強いが、SQLAlchemy mypy plugin の互換性で mypy を優先。
+
+### 2.10 テスト: pytest + pytest-asyncio + testcontainers
+
+- **pytest-asyncio**: `asyncio_mode = "auto"` で async テストを素直に書く。
+- **testcontainers-python**: Postgres を Docker で起動し、Alembic で最新スキーマを適用 → 1 法令投入 → API を叩く統合テストを CI で回す。スキーマ拡張（`pg_bigm`/`pgroonga`/`ltree`）を入れたカスタムイメージを使う。
+- **スナップショットテスト**: `syrupy` で e-Gov 実 API のレスポンスを録画し、本実装との差分検出。互換性維持のレグレッション防止。
+- **代替検討**: SQLite はスキーマ機能（`ltree`/`tsvector`/`pg_bigm`/`EXCLUDE`）を持たないため不採用。インメモリ実行のために妥協はしない。
