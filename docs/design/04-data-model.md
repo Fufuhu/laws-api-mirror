@@ -251,23 +251,27 @@ TABLE law_node
 
 ### 4.8 添付ファイル
 
+添付ファイル本体（JPG / PDF）は **S3 または S3 互換オブジェクトストレージ** に保存し、DB にはメタデータとオブジェクトキーのみを持つ（DB の BYTEA には入れない）。S3 互換ソフトウェアの具体選定と、Zip 一括取得・重複排除の方式は §11.2 で別途検討。
+
 ```
 TABLE attached_file
   id                BIGSERIAL PRIMARY KEY
   law_revision_id   FK -> law_revision
-  src               TEXT NOT NULL              -- 例: ./pict/M06SE065-001.jpg
+  src               TEXT NOT NULL              -- 法令XML中の Fig.src（例: ./pict/M06SE065-001.jpg）
   content_type      TEXT                       -- image/jpeg, application/pdf
-  byte_size         INTEGER
-  sha256            BYTEA
+  byte_size         BIGINT
+  sha256            BYTEA NOT NULL             -- 重複排除キー兼整合性チェック
+  object_key        TEXT NOT NULL              -- オブジェクトストレージ上のキー（例: attachments/sha256/ab/cd.../bytes）
   source_updated_at TIMESTAMPTZ
   UNIQUE (law_revision_id, src)
-
-TABLE attached_file_blob
-  attached_file_id  PK FK -> attached_file
-  content           BYTEA NOT NULL             -- 大容量の場合は外部ストレージへ
+  INDEX (sha256)
 ```
 
-実運用ではバイナリは S3/MinIO に逃がし、`attached_file` に URL を持つ構成のほうが Postgres を肥大化させない。要確認。
+設計ポイント:
+
+- バイナリは `object_key` 経由で取得する。同一 `sha256` は 1 オブジェクトに集約し、複数の `attached_file` 行から参照可能（重複排除）。
+- バケット名・エンドポイントはアプリ設定（環境変数）から解決し、DB に永続化しない。AWS S3 ／ S3 互換ソフトの切替はエンドポイント URL の差し替えで完結する。
+- `law_node.fig_src`（§4.7）と `attached_file(law_revision_id, src)` で join し、`/attachment/{law_revision_id}?src=...` に応答する。
 
 ### 4.9 取り込み管理
 
