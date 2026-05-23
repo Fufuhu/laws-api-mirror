@@ -235,7 +235,7 @@ TABLE law_node
   path_text         TEXT          NOT NULL                     -- 例: "MainProvision-Article_21-Paragraph_3-Item_2"
   depth             SMALLINT      NOT NULL                     -- 0=Law
   -- 検索
-  text_search       TSVECTOR                                   -- 日本語 tsvector（pgroonga 採用時は別カラム pgroonga_text）
+  text_search       TSVECTOR                                   -- pg_bigm + tsvector ハイブリッド（§5）。text_plain には pg_bigm の GIN を、本カラムには tsvector の GIN を別途張る
   UNIQUE (law_revision_id, path)
   INDEX USING GIST (path)
   INDEX (law_revision_id, parent_id, ordinal)
