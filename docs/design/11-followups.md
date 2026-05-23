@@ -87,9 +87,18 @@
 
 ### 11.4 改正条文ツリー (`AmendProvision`) のレンダリング戦略
 
-- `/law_data` レスポンスで改正条文サブツリーをどう扱うか
-- `omit_amendment_suppl_provision=true` の判定実装と、被改正法令の本体と改正法令の附則を分離するロジック
-- 改正前後比較（条文比較）機能の要不要
+**1st リリース方針（§10-8 で確定）**: e-Gov API v2 互換維持に必要な (a)(b) のみ実装。追加機能は本節を将来検討メモとして残置。
+
+- **1st リリース実装**:
+  - (a) `omit_amendment_suppl_provision=true` の SQL 実装。`law_node` を `path` に `SupplProvision` を含み `suppl_type='Amend'` であるサブツリーを WHERE で除外する。
+  - (b) AmendProvision / NewProvision を `law_node` に通常ノードとして格納したまま、JSON/XML レスポンスで素直に返す。
+- **将来検討（1st リリース対象外）**:
+  - (c) **改正指示と新条文の視覚的識別**: AmendProvision サブツリー内に「改正指示文（AmendProvisionSentence）」と「新条文（NewProvision）」が混在するため、UI 側で識別できるようレスポンスに補助フィールドを追加する案。e-Gov 互換から外れるため別 API or 拡張ヘッダで提供する形を検討。
+  - (d) **改正前後比較（条文比較）機能**: AmendProvision を解釈（例: 「『五年』を『十年』に改める」を被改正法令本文に適用）して before/after の差分を生成する。実装が重い。e-Gov 本家には「条文比較」UI があるため、将来サポート対象になる可能性あり。
+- **(c)(d) 実装時の論点**:
+  - レスポンス互換性: e-Gov API v2 のスキーマを保ったまま追加するか、独自エンドポイント (`/laws-extended/...`) として切り出すか。
+  - パース精度: AmendProvision の文言は自然言語で書かれており、機械適用には NLP 的な解析が必要。
+  - 改正法令と被改正法令の依存解決: 改正法令を取得した時点では被改正法令の本文も DB にある前提だが、まれに存在しないケースの扱い。
 
 ### 11.5 引用関係の抽出
 

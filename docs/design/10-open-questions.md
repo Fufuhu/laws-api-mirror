@@ -7,6 +7,9 @@
 5. ~~**更新頻度**~~ → **確定**: **日次 1 回**で十分。Procrastinate の `@periodic(cron="0 3 * * *")` で差分取り込みジョブを定期実行する（§8、§11.7）。e-Gov 側の差分提供範囲も過去 3 か月なので、日次運用していれば取りこぼしは発生しない。
 6. ~~**既存改正法令の参照整合性**~~ → **確定**: 独立 `amendment_law` テーブル + Lazy reconciliation（方針 C + D、§11.8）。データモデルは §4.5 に反映済み。残課題は §11.8.4（新規制定法令の `amendment_law_id` 扱い、UPSERT 仕様、Lazy ジョブの頻度）。
 7. ~~**`QuoteStruct` の取り扱い深度**~~ → **確定**: 方針 D（A → C 段階導入、§11.9）。初期は不透明 XML として保持（方針 A、§4.7 既存）、後段で §11.5 と連動して `quote_extract` テーブル（方針 C）を追加。
-8. **`AmendProvision` ツリーのレンダリング**: 改正条文を `law_node` に通常ノードとして格納するが、`/law_data` レスポンスで「改正部分を畳む」UI 要件があるか。
+8. ~~**`AmendProvision` ツリーのレンダリング**~~ → **確定**: 1st リリースは **e-Gov API v2 互換維持**を前提とし、以下のみ実装する。
+   - (a) `omit_amendment_suppl_provision=true` のサポート（`SupplProvision.Type='Amend'` のサブツリーを除外する SQL）
+   - (b) AmendProvision / NewProvision ノードはそのまま JSON/XML レスポンスに含める（DB に格納した `law_node` を素直に返却）
+   - 追加のレンダリング機能（改正指示と新条文の視覚的識別フラグ、改正前後差分生成 など）は **1st リリース対象外**。検討メモは §11.4 に残置。
 9. **JSON（詳細版/簡易版）の差分**: `json_format=light` 時に「インライン要素はテキスト埋め込み、属性は `AmendLawNum`/`Extract`/`Paragraph.Num` のみフィールド化」というルールを `rendering` 層で正確に再現する必要がある。
 10. **XSD バージョン管理**: 法令標準 XML スキーマがバージョンアップした際の `node_kind` 追加運用（Alembic でマスタ追加リビジョンを作る方針で良いか）。
