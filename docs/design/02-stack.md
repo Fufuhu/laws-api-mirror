@@ -83,6 +83,6 @@
 ### 2.10 テスト: pytest + pytest-asyncio + testcontainers
 
 - **pytest-asyncio**: `asyncio_mode = "auto"` で async テストを素直に書く。
-- **testcontainers-python**: Postgres を Docker で起動し、Alembic で最新スキーマを適用 → 1 法令投入 → API を叩く統合テストを CI で回す。`pg_bigm` / `ltree` / `textsearch_ja`（MeCab）を入れたカスタムイメージを使う。
+- **testcontainers-python**: Postgres を Docker で起動し、Alembic で最新スキーマを適用 → 1 法令投入 → API を叩く統合テストを CI で回す。`pg_bigm` / `ltree` / `textsearch_ja`（MeCab）を入れたカスタムイメージを使う。詳細な解説と使い方は [`docs/guides/testcontainers.md`](../guides/testcontainers.md)。
 - **スナップショットテスト**: **1st リリースでは実施しない**（§10-9 で「インタフェース互換のみ維持、バイト単位一致は目指さない」と確定したため、e-Gov 実 API との差分検出は不要）。将来 §11.11 のエッジケース合わせ込みを行うフェーズで `syrupy` 等の導入を再検討。
 - **代替検討**: SQLite はスキーマ機能（`ltree` / `tsvector` / `pg_bigm` / `EXCLUDE`）を持たないため不採用。インメモリ実行のために妥協はしない。
