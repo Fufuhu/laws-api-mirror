@@ -414,6 +414,52 @@ CREATE INDEX law_node_text_search_idx
 
 検索式（AND/OR/NOT、ワイルドカード）は `search.query_parser` モジュールで AST 化し、採用エンジンに応じた SQL/関数呼び出しへ変換する責務分離とする。エンジン差し替えが API 層に漏れない構造にしておく。
 
+### 5.4 ハイブリッド構成（pg_bigm + tsvector）
+
+pg_bigm と tsvector は得意領域が直交しているため、両者を **同じ `law_node` に対して併存させ、クエリ種別でルーティング**する構成も有力（要 PoC）。
+
+**得意領域の対応**
+
+| クエリ種別 | 担当 | 理由 |
+|---|---|---|
+| ワイルドカード `*` `?` 含む | pg_bigm | tsvector は形態素境界で切るため破綻 |
+| 1〜2 文字トークン混じり | pg_bigm | tsvector は語彙単位 |
+| 引用条文表記・固有名詞・記号入り | pg_bigm | MeCab の未知語分割を回避 |
+| 自然文の語形変化 | tsvector | 活用形を語幹に正規化 |
+| ハイライト＋前後文脈 | tsvector (`ts_headline`) | bigm 単独では自前計算 |
+| スコアリング (`ts_rank`) | tsvector | e-Gov 仕様では未使用だが拡張余地 |
+
+**ルーティング戦略**
+
+- **(α) 振り分け方式**: `search.query_parser` で AST 化した時点でワイルドカード or 短トークンの有無を判定し、**ワイルドカード=pg_bigm 強制**、それ以外は tsvector を優先。e-Gov の `*`/`?` と `tsvector` は本来非互換のため安全側に倒す。
+- **(β) 二段検索方式**: 1 段目で pg_bigm により粗く候補ノードを絞り（false positive 許容）、2 段目で tsvector により再評価＋ハイライト＋並び順を確定。精度優先なら (β)、レイテンシ優先なら (α)。
+
+**スキーマ追記**
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_bigm;
+-- text_plain は §4.7 で既存
+ALTER TABLE law_node ADD COLUMN text_search tsvector
+  GENERATED ALWAYS AS (to_tsvector('japanese', coalesce(text_plain, ''))) STORED;
+CREATE INDEX law_node_text_bigm_idx
+  ON law_node USING gin (text_plain gin_bigm_ops);
+CREATE INDEX law_node_text_search_idx
+  ON law_node USING gin (text_search);
+```
+
+**トレードオフ**
+
+- 書き込みコスト: GIN インデックスが 2 本になるため取り込み時の更新コストは **約 2 倍**。
+- ストレージ: bigm は本文長の 0.5〜1 倍、tsvector は語彙数依存で 0.3〜0.5 倍。法令本文全体で数 GB ならいずれも許容範囲。
+- 辞書メンテ: MeCab/ipadic（または unidic）の更新運用が発生。避けたい場合は単独構成（pg_bigm のみ）にフォールバック可能。
+- クエリ層の複雑度: `query_parser` の責務が増える。エンジンアダプタを差し替え可能な形にし、ハイブリッド適用は段階導入とする。
+
+**段階導入の指針**
+
+1. **PoC: pg_bigm 単独**で e-Gov 仕様を満たせるか検証（スコアリング不要・ワイルドカード必須なので有力）。
+2. ハイライトの質や自然語検索の精度が不足するようなら **tsvector を追加投入**してハイブリッド化。
+3. 設計上は最初から `query_parser → engine_adapter` の責務分離を確立しておき、(1)→(2) の移行で API 層を変更しないこと。
+
 ## 6. Alembic 運用
 
 - すべてのスキーマ変更は Alembic リビジョンとして管理。
