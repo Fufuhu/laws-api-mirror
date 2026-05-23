@@ -77,6 +77,29 @@ laws-api-mirror/
 
 法令ドメインは **「法令 (`law`)」「履歴 (`law_revision`)」「本文構造ノード (`law_node`)」** の 3 層で構成する。法令 XML の階層構造は、ノードに対する **隣接リスト + materialized path** で表現し、`elm` パラメータの解決をインデックスで一発検索できるようにする。
 
+### 4.0 法令標準XMLスキーマ v3 からの設計上の含意
+
+[`XMLSchemaForJapaneseLaw_v3.xsd`](https://laws.e-gov.go.jp/file/XMLSchemaForJapaneseLaw_v3.xsd) を精読した結果、データモデル上で以下の点が確定する:
+
+1. **`Law` ルート属性**: `Era` (Meiji/Taisho/Showa/Heisei/Reiwa), `Year` (positiveInteger), `Num` (positiveInteger), `PromulgateMonth`, `PromulgateDay`, `LawType` (Constitution/Act/CabinetOrder/ImperialOrder/MinisterialOrdinance/Rule/Misc), `Lang` (ja/en) はすべて **必須 or 任意属性**として XML に明示。API メタ（`law_info`）と重複するが、**`law_xml` 取り込み時の整合性チェック**に使う。
+2. **構造階層の choice 構造**: `MainProvision` は `Part+ | Chapter+ | Section+ | Article+ | Paragraph+` のいずれか（法令ごとに depth が違う）。`Part > Chapter > Section > Subsection > Division > Article > Paragraph > Item > Subitem1 > … > Subitem10` の **9 段 + 5 段** の階層が起こり得るが、すべての段が常に出るわけではない。
+3. **Num 属性の型混在**:
+   - `Article.Num`, `Item.Num`, `Subitem*.Num`, `Class.Num` は **任意文字列**（"21_2", "21_2_3" のような枝番表記を許容）
+   - `Paragraph.Num` は **xs:positiveInteger**（整数）
+   - `Sentence.Num`, `Column.Num`, `AppdxTable.Num` も positiveInteger
+4. **`Subitem` は 10 段**: `Subitem1` から `Subitem10` まで（旧設計の "Subitem1..5" は誤り）。各段に `*Title?`, `*Sentence`, 子 `Subitem(N+1)*`, `TableStruct|FigStruct|StyleStruct|List` を持つ。
+5. **`Sentence` は mixed content**: テキストに加え `Line`, `QuoteStruct`, `ArithFormula`, `Ruby`, `Sup`, `Sub` がインラインで混在。属性は `Num`, `Function` (main/proviso), `Indent` (Paragraph/Item/Subitem1..10), `WritingMode` (vertical/horizontal default vertical)。これらは **検索結果ハイライトと縦書きレンダリングに必要**。
+6. **`QuoteStruct` は `type="any"`**: 任意XML埋め込み（被改正法令断片など）。**子要素を分解せず raw XML として保持**するのが現実解。
+7. **`SupplProvision` 属性**: `Type` (New/Amend), `AmendLawNum`, `Extract`。API ドキュメントで言及されている `omit_amendment_suppl_provision=true` の判定はこの `Type="Amend"` で行う。
+8. **`AmendProvision` / `NewProvision`**: 法令の改正条文を表現する要素で、内部に **構造ノードを丸ごとネスト**できる（Part, Chapter, Article, Paragraph, ... さらには AppdxTable まで）。再帰スキーマで設計する必要がある。
+9. **`TableColumn`**: `rowspan`, `colspan`, `BorderTop/Bottom/Left/Right` (solid/none/dotted/double), `Align`, `Valign` を持ち、内部にも構造要素 (Article/Paragraph 等) を入れられる。**表は単なるテキストではなく木構造**。
+10. **`LawTitle` 属性**: `Kana`, `Abbrev`, `AbbrevKana` — `revision_info.law_title_kana` / `abbrev` の出所はここ。
+11. **`Article` / `Part` / `Chapter` / `Section` / `Subsection` / `Division` / `Item` / `Subitem*`** には `Delete` と `Hide` のブール属性がある（削除・非表示扱い）。`Paragraph` には `OldStyle`, `OldNum`, `Hide`。
+12. **`Fig` は `src` のみの葉要素**（`FigStruct` でラップされる）。`AppdxTable.Num` は任意（番号なし別表あり）。
+13. **`TOC` は独立構造**: `TOCLabel?`, `TOCPreambleLabel?`, `TOCPart+ | TOCChapter+ | TOCSection+ | TOCArticle+`, `TOCSupplProvision?`, `TOCAppdxTableLabel*`。本文 (`MainProvision`) と別系統。
+
+これらを単一の `law_node` テーブルに **属性は `JSONB` ＋ 重要属性は専用カラム化**で格納する。
+
 ### 4.1 マスタ／参照テーブル
 
 ```
