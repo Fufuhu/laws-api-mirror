@@ -5,4 +5,5 @@
 - **添付ファイル統合**: SeaweedFS（または `motoserver/moto` 等の S3 モック）を testcontainers で同梱し、`/attachment/{law_revision_id}` の S3 連携を疎通確認。
 - **ジョブ統合**: Procrastinate ワーカーを別プロセスで立ち上げ、`@task` / `@periodic` の発火と `amendment_law` の Lazy reconciliation（§11.8）が想定どおり動くか検証。
 - **互換性（インタフェース）**: 1st リリースでは **e-Gov 実 API との差分比較スナップショットテストは実施しない**（§10-9 / §2.10）。レスポンス形状（フィールド名・型）の妥当性は本実装内のスキーマ定義（Pydantic）と自家フィクスチャでチェックするにとどめる。実 API との突合せは §11.11 の合わせ込みフェーズで `syrupy` 等の導入を含めて再検討。
+- **API テストケース集**: 同値分割・境界値分析に基づく具体的なテスト ID 一覧は [`docs/tests/api-test-cases.md`](../tests/api-test-cases.md) を参照。
 
