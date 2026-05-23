@@ -10,6 +10,8 @@
 | マイグレーション | Alembic | autogenerate を活用、ただしレビュー必須 |
 | XML パース | `lxml`（iterparse でストリーミング） | 1 法令あたり XML が大きいため SAX 風処理 |
 | ジョブ | Procrastinate（PostgreSQL `LISTEN/NOTIFY` ベース） | Redis は使用しない。詳細は §11.7 |
+| オブジェクトストレージ | 本番: AWS S3 / 開発・CI: SeaweedFS | アクセスは `boto3` / `aioboto3`、エンドポイント切替は環境変数（§11.2）|
+| キャッシュ層 | CDN（通信経路最適化のみ） | レスポンスキャッシュ・アプリ層キャッシュは 1st リリースでは導入しない（§10-4）|
 | Lint/Format | Ruff + mypy | |
 | テスト | pytest + pytest-asyncio + testcontainers (Postgres) | |
 
@@ -51,7 +53,7 @@
 
 ### 2.6 マイグレーション: Alembic
 
-- **autogenerate の限界**: `EXCLUDE` 制約、`GENERATED` 列、`tsvector` インデックス、`ltree`/`pg_bigm`/`pgroonga` の `CREATE EXTENSION` は **autogenerate で検出されないことが多く、手書き必須**。
+- **autogenerate の限界**: `EXCLUDE` 制約、`GENERATED ... STORED` 列、`tsvector` / `pg_bigm` の GIN インデックス、`ltree` / `pg_bigm` の `CREATE EXTENSION` は **autogenerate で検出されないことが多く、手書き必須**。
 - **データ移行同梱**: `node_kind`、`category`、`era`、`law_type` 等のマスタデータ投入はリビジョン内で `op.bulk_insert` 実施。XSD バージョンアップ時の追加要素はマスタ追記リビジョンで対応（§10 参照）。
 - **オフラインモード**: `alembic upgrade --sql` で DBA レビュー可能な SQL を出力できるため、本番反映前のレビュー手段を確保。
 
