@@ -101,3 +101,137 @@
 
 - `https://laws.e-gov.go.jp/docs/` の更新追跡（α 版のため仕様変更頻度が高い）
 - API v2 試行版機能（JSON 形式レスポンス、`law_num` を含むパラメータ指定時のレスポンス）の仕様変更に追随する仕組み
+
+### 11.7 ジョブキュー実装方式（Procrastinate 採用確定）
+
+**結論**: **Procrastinate** を採用する。本節は選定経緯と実装メモを残す検討資料。残課題は §11.7.5「採用後の検討事項」に集約。
+
+**前提と制約**:
+
+- **Redis は使用しない**（運用ミドルウェアを増やしたくない）。
+- バックエンドとして許容するのは **AWS SQS（または SQS 互換ソフトウェア）** か **PostgreSQL** のいずれか。
+- 既に確定済みの構成: AWS S3（本番）/ SeaweedFS（開発）、PostgreSQL（本番／開発共通）。
+- 言語ランタイム: Python 3.12+、asyncio ネイティブ。
+- 想定ワークロード:
+  - 全件取り込み: 数十分〜数時間の長尺ジョブ、年に数回。
+  - 差分取り込み: 日次 cron、数分〜数十分。
+  - 添付ファイル S3 アップロード: 数千〜数万の小ジョブ。
+  - 検索インデックス再構築: 不定期、長尺。
+- 必要機能: **async ネイティブ実行**、**cron / periodic**、**再試行＋バックオフ**、**進捗観測**、**冪等性**。
+
+**Arq は不採用**: Redis 専用設計でバックエンド差し替え不可。
+
+#### 11.7.1 候補方式
+
+**方式 A: AWS SQS + 自前ワーカー（aioboto3）**
+
+- SQS 標準キュー（または FIFO）からポーリングする async ワーカープロセスを自前実装。
+- 本番は AWS マネージドサービスのため運用負荷ゼロ。Lambda トリガとも組み合わせ可能。
+- 開発・CI は **ElasticMQ**（Scala 製、SQS API 互換、軽量）か **LocalStack**（広範な AWS API モック）で代替。
+- cron 機能は SQS にないため、**EventBridge Scheduler**（本番）／**cron + enqueue スクリプト**（開発）で補う。
+
+**方式 B: PostgreSQL ベースのジョブキューライブラリ**
+
+候補ライブラリ:
+
+- **Procrastinate** (Doctolib 製): `LISTEN/NOTIFY` ベース、async ネイティブ、cron 内蔵、再試行内蔵、ジョブテーブルが SQL 観測可能、Alembic 連携可。**第1候補**。
+- **pgmq** (Tembo 製 PG 拡張): SQL ライクで軽量。ただし cron / 再試行は自前実装が必要。
+- **pgqueuer** (新興): asyncpg ベース、シンプル。実績まだ少。
+- **APScheduler + 自前テーブル**: 機能は限定的。
+- **自作（advisory lock + skip-locked）**: 学習コスト 0 だがメンテ負荷を抱える。
+
+**方式 C: ハイブリッド（PostgreSQL = メタ管理 + SQS = ワーカー配送）**
+
+- ジョブの状態・履歴・依存関係は PostgreSQL の `ingest_run` / `ingest_law_event` テーブル（§4.9）で永続管理。
+- ジョブの配送のみ SQS を経由し、ワーカーは SQS をポーリング。
+- 複雑度は上がるが、観測性（SQL）とスケール（SQS）を両取りできる。
+
+#### 11.7.2 比較表
+
+| 観点 | A: SQS + 自前 | B: Procrastinate | C: ハイブリッド |
+|---|---|---|---|
+| 追加ミドルウェア | SQS（本番）/ ElasticMQ（開発） | なし（PG 流用） | SQS + PG |
+| async ネイティブ | ◎ aioboto3 で完結 | ◎ | ◎ |
+| cron / periodic | △ EventBridge 等で外付け | ◎ 標準機能 | △ EventBridge |
+| 再試行・バックオフ | ○ 可視性タイムアウト + DLQ | ◎ ライブラリ標準 | ○ |
+| 進捗観測 | △ CloudWatch / 自前テーブル | ◎ SQL 一発 | ◎ |
+| 長尺ジョブ（数時間） | △ 可視性タイムアウト調整必要、Heartbeat 必要 | ○ ロック保持 + 通知 | △ |
+| ワーカー水平スケール | ◎ SQS 自然 | ○ skip-locked で OK | ◎ |
+| ローカル開発の容易さ | △ ElasticMQ / LocalStack 追加 | ◎ DB だけで完結 | △ |
+| ベンダーロックイン | ○ SQS API はほぼ標準 | ◎ なし | △ |
+| 学習コスト | 中（実装の手数）| 低 | 高 |
+| 既存テーブルとの統合 | △ 別物 | ◎ 同居 | ◎ |
+
+#### 11.7.3 評価
+
+- **本プロジェクトの規模**は中小規模で、ワーカー水平スケール要求は当面ない。ジョブ件数も SQS 課金が問題になる規模ではない。
+- **観測性**を重視するなら、ジョブ状態を SQL でクエリできる方式 B が圧倒的に楽（取り込み失敗の調査、再実行範囲の特定が `SELECT` だけで済む）。
+- **ローカル開発・CI** で追加ミドルウェアを増やしたくない方針と方式 B が一致。
+- **将来サーバーレス化**（Lambda 移行）を視野に入れるなら方式 A / C。現時点ではその想定はない。
+
+#### 11.7.4 採用結論
+
+**採用: 方式 B（Procrastinate）**
+
+決定理由:
+
+1. 既に運用する PostgreSQL に同居でき、**追加ミドルウェアゼロ**。Redis 不使用方針と完全一致。
+2. `procrastinate_jobs` テーブルが `ingest_run` / `ingest_law_event`（§4.9）と SQL で結合・横断観測できる。
+3. asyncio ネイティブで FastAPI と同じイベントループに乗る。
+4. cron / 再試行 / バックオフ / 優先度がライブラリ標準。
+5. Alembic で同居スキーマ管理可能（`procrastinate.schema.sql` をリビジョン化）。
+
+将来サーバーレス化（Lambda 移行）等で SQS に切り替える必要が生じた場合、**ジョブ関数のシグネチャ自体は変えずに `engine_adapter` 相当の薄い層を入れて移行可能**な形にしておく。
+
+#### 11.7.5 採用後の検討事項（残課題）
+
+- **Procrastinate スキーマ管理**: `procrastinate` 専用スキーマ名で隔離し、Alembic でリビジョン管理する手順。
+- **長尺ジョブの分割**: 全件取り込みを 1 ジョブで完結させず、親ジョブ → 法令単位の子ジョブに分解する設計の細部。
+- **失敗ジョブの DLQ 相当運用**: `procrastinate_jobs.status = 'failed'` の集約と再投入 API。
+- **観測**: `procrastinate_jobs` を Grafana / Metabase に接続する具体ダッシュボード設計。
+- **同一法令の並行更新防止**: 同じ `law_revision_id` を対象にしたジョブの直列化（`procrastinate` のキュー設計 or `pg_advisory_xact_lock`）。
+- **ワーカープロセスの配置**: アプリと同居か別 Pod / コンテナか。本番運用の構成決定。
+
+#### 11.7.6 実装メモ
+
+```python
+# app/jobs/app.py
+from procrastinate import App, PsycopgConnector
+
+procrastinate_app = App(connector=PsycopgConnector(
+    kwargs={"conninfo": settings.database_url}
+))
+
+# app/jobs/ingest.py
+@procrastinate_app.task(queue="ingest", retry=5, pass_context=True)
+async def ingest_law_revision(context, law_revision_id: str) -> None:
+    ...
+
+@procrastinate_app.periodic(cron="0 3 * * *")
+@procrastinate_app.task(queue="ingest")
+async def daily_delta(timestamp: int) -> None:
+    ...
+
+# 起動: procrastinate --app=app.jobs.app.procrastinate_app worker
+```
+
+- Procrastinate のスキーマは `procrastinate` という独立スキーマ名で別管理し、アプリのテーブルと混在させない。
+- 長尺ジョブ（全件取り込み）は `procrastinate` のジョブを「親」として 1 件作り、その中で法令単位の **子タスクを enqueue**する分割設計にする（1 ジョブ = 1 法令）。
+- DLQ 相当: `procrastinate_jobs.status = 'failed'` の行を別 view で抽出し、Web UI から再投入できるエンドポイントを用意。
+- 観測: `procrastinate_jobs` を Grafana / Metabase に接続。
+
+#### 11.7.7 参考: 不採用方式の予備メモ（方式 A: SQS + 自前ワーカー）
+
+将来 Procrastinate から SQS へ移行する必要が生じた場合の参考メモ。
+
+- キュー名: `laws-ingest-<env>`、DLQ: `laws-ingest-dlq-<env>`。
+- 可視性タイムアウト: 全件取り込みのような長尺ジョブはタイムアウト延長 (`ChangeMessageVisibility`) を Heartbeat で実施。
+- ローカル: `docker compose` に **ElasticMQ** を同梱。`AWS_ENDPOINT_URL_SQS` の差し替えで aioboto3 が動作。
+- cron: 本番 EventBridge Scheduler、開発は `apscheduler` または `cron`。
+- ジョブメタは独自テーブル `ingest_run` / `ingest_law_event` で管理。
+
+#### アウトプット
+
+- Procrastinate 採用の意思決定記録（ADR）
+- Procrastinate スキーマの Alembic リビジョン同居方法
+- 長尺ジョブの分割設計（親 → 子タスク）と DLQ 運用 Runbook
