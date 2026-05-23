@@ -220,7 +220,97 @@ async def daily_delta(timestamp: int) -> None:
 - DLQ 相当: `procrastinate_jobs.status = 'failed'` の行を別 view で抽出し、Web UI から再投入できるエンドポイントを用意。
 - 観測: `procrastinate_jobs` を Grafana / Metabase に接続。
 
-#### 11.7.7 参考: 不採用方式の予備メモ（方式 A: SQS + 自前ワーカー）
+### 11.8 既存改正法令の参照整合性（方針 C 採用確定）
+
+**結論**: **方針 C（独立 `amendment_law` テーブル）＋ 方針 D（Lazy reconciliation）**を採用する。データモデルは §4.5 に反映済み。本節は選定経緯と残課題の整理。
+
+**論点（§10-6）**: `law_revision.amendment_law_id` は「この履歴に対応する改正を行った法令の law_id」を指すが、**改正法令そのものが `law` テーブルに存在しないケース**が一定数発生する。
+
+#### 11.8.1 不一致が発生する典型例
+
+- **過去の改正法**: e-Gov の法令データ整備は平成 29 年（2017 年）4 月 1 日時点以降が中心。それ以前に成立して既に役目を終えた一部改正法（例: 昭和期の改正法）はマスタに含まれず、被改正法令の履歴側にのみ `amendment_law_id` 文字列として残る。
+- **失効・廃止後にデータ削除**: 一部改正法は施行後に役目を終えると e-Gov 側で扱いが変わり、`law` の現行マスタに含まれない場合がある。
+- **同一改正法 ID で複数履歴**: 1 本の改正法が複数の被改正法令の複数の履歴に紐づく多対多関係。
+- **API v2 試行版**: `law_num` を含むパラメータでのレスポンスデータは試行版で仕様変更がありうる（OpenAPI ドキュメントの注意書き）。
+- **取り込み順序問題**: 全件取り込み中、被改正法令を先に取り込んだ瞬間は改正法令が未投入で、トランザクション内では FK 解決できない。
+
+#### 11.8.2 採用可能な方針
+
+**方針 A: 厳格 FK（不採用）**
+
+- `law_revision.amendment_law_id` を `law(law_id)` への NOT NULL FK にする。
+- 取り込み時に改正法令が存在しない場合は取り込み失敗。
+- **問題**: 失敗率が高すぎる。データ整備状況に依存して取り込みが頓挫する。
+
+**方針 B: 文字列保持のみ（緩い参照）**
+
+- `law_revision.amendment_law_id` は **FK なしの TEXT** として保持。`law` の有無に依存しない。
+- 検索・表示時に LEFT JOIN で `law` を引き、ヒットしない場合は API レスポンスの `amendment_law_title` 等の文字列フィールドのみで応答（e-Gov API もこの形）。
+- **長所**: 取り込みが堅牢。FK 制約による失敗がない。
+- **短所**: 参照先の整合性が DB レベルで保証されない。整合性チェックはアプリ層 / 観測クエリで実施。
+
+**方針 C: 独立した `amendment_law` テーブル（推奨）**
+
+- 改正法令のメタ（`amendment_law_id`, `amendment_law_title`, `amendment_law_title_kana`, `amendment_law_num`）を **`amendment_law` テーブル**に別管理。
+- `law_revision.amendment_law_id` は `amendment_law(amendment_law_id)` への FK（必須 / 任意は要決定、原則 NOT NULL）。
+- `amendment_law` は `law` とは別系統で、改正法令が後から `law` に投入された場合は **`amendment_law.linked_law_id` を埋めて両者を紐付ける**（Lazy Linking）。
+- API レスポンス組立時は `amendment_law` を 1 次ソース、`law` への解決は `linked_law_id` 経由で行う。
+- **長所**: 改正法令のメタを必ず DB に持ち、整合性を保証できる。`law` の有無に依存しない。後付けで関連付けも可能。
+- **短所**: テーブル 1 つ増える。取り込みロジックが少し複雑になる。
+
+```
+TABLE amendment_law
+  amendment_law_id        VARCHAR(15) PRIMARY KEY      -- 例: 506CO0000000161（law_id 形式）
+  amendment_law_title     TEXT
+  amendment_law_title_kana TEXT
+  amendment_law_num       TEXT
+  amendment_promulgate_date DATE
+  linked_law_id           VARCHAR(15) REFERENCES law(law_id)   -- 後付けで紐付け可能
+  first_seen_at           TIMESTAMPTZ NOT NULL
+  last_seen_at            TIMESTAMPTZ NOT NULL
+  INDEX (linked_law_id)
+```
+
+`law_revision`:
+
+```
+amendment_law_id VARCHAR(15) REFERENCES amendment_law(amendment_law_id)
+```
+
+**方針 D: Lazy reconciliation（C との併用または B との併用）**
+
+- 取り込みパイプラインの末尾、または日次バッチで **`amendment_law.linked_law_id` を `law` と再突合**する Procrastinate ジョブを定期実行（`@periodic`）。
+- 全件取り込み直後と、差分取り込み完了直後に必ず走らせる。
+
+#### 11.8.3 採用決定（方針 C ＋ D）
+
+決定理由:
+
+- e-Gov API v2 のレスポンス構造（`amendment_law_id` + `amendment_law_title` + `amendment_law_num` がフラットに並ぶ）と `amendment_law` テーブルが 1:1 対応する。
+- `law` への厳格 FK を避けつつ、改正法令のメタ自体は欠落させない。
+- 後から改正法令が `law` に投入された際に、Lazy ジョブで自然に整合性が回復する。
+- API ハンドラ側のクエリは `law_revision LEFT JOIN amendment_law LEFT JOIN law ON law.law_id = amendment_law.linked_law_id` の 2 段 LEFT JOIN で完結。
+
+§4.5「改正関係」にあった旧 `amendment_relation` テーブルは `amendment_law` で吸収済み（§4.5 を改訂）。改正法令と被改正法令の多対多は `law_revision.amendment_law_id` の N:1 で表現される。
+
+#### 11.8.4 残課題
+
+- **`amendment_law` への UPSERT 仕様**: 同一 ID で `amendment_law_title` 等が差し替わった場合の扱い（履歴を取るか上書きか）。**初期は上書き**（`last_seen_at` のみ追記）とし、必要に応じて履歴テーブルを追加する方向。
+- **取り込み順序**: 被改正法令の `law_revision` を投入する前に、`amendment_law` 行をプレースホルダとして UPSERT する（最低限 `amendment_law_id` のみ確定で、メタは順次補完）。
+- **新規制定法令の扱い**: `mission=New` の `law_revision` で `amendment_law_id` をどう持つか。
+  - 案 1: NULL 許容（`law_revision.amendment_law_id` を NULL 可とする）。
+  - 案 2: 自己参照プレースホルダ（`amendment_law_id = law_id` の `amendment_law` 行を生成）。
+  - 案 1 を第1候補とする方向（要レビュー）。
+- **Lazy reconciliation の頻度**: 全件取り込み直後、日次差分取り込み直後、または独立した weekly ジョブのいずれか。第1候補は「差分取り込み完了後に毎回実行」。
+- **API レスポンスでの表現**: 解決済み（`linked_law_id` 有）と未解決を区別するフィールドを返すか否か。e-Gov 互換維持のため **既定では区別を返さず**、内部観測用フィールドのみとする。
+
+#### アウトプット
+
+- `amendment_law` テーブル DDL（Alembic リビジョン、§4.5 反映済み）と取り込みロジック詳細
+- Lazy reconciliation ジョブ（Procrastinate `@task` 化）の実装方針
+- 新規制定法令の `amendment_law_id` 扱いに関する最終決定メモ
+
+### 11.9 参考: 不採用方式の予備メモ（ジョブキュー方式 A: SQS + 自前ワーカー）
 
 将来 Procrastinate から SQS へ移行する必要が生じた場合の参考メモ。
 
