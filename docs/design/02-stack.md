@@ -5,7 +5,7 @@
 | 言語 | Python 3.12+ | `pyproject.toml` を採用 |
 | パッケージ管理 | uv（推奨）または Poetry | 未決定。要確認 |
 | Web | FastAPI + Uvicorn / Gunicorn | OpenAPI 自動生成を v2 仕様に合わせる |
-| DB | PostgreSQL 16 | 全文検索は `pg_trgm` + `tsvector`（日本語は `pgroonga` 採用を要検討） |
+| DB | PostgreSQL 16 | 全文検索は `pg_bigm` + `tsvector` のハイブリッド構成（§5）|
 | ORM | SQLAlchemy 2.x（async） | `asyncpg` ドライバ |
 | マイグレーション | Alembic | autogenerate を活用、ただしレビュー必須 |
 | XML パース | `lxml`（iterparse でストリーミング） | 1 法令あたり XML が大きいため SAX 風処理 |
@@ -13,7 +13,7 @@
 | Lint/Format | Ruff + mypy | |
 | テスト | pytest + pytest-asyncio + testcontainers (Postgres) | |
 
-§5（全文検索）も併せて参照。検索エンジン（pg_bigm / pgroonga / tsvector）は別途 PoC 後に確定。
+§5（全文検索）も併せて参照。検索エンジンは **`pg_bigm` + `tsvector` のハイブリッド構成で確定**（pgroonga は不採用）。
 
 ### 2.1 言語: Python 3.12+
 
@@ -40,7 +40,7 @@
 - **`ltree` 拡張**: §4.7.1 の `elm` パス解決を `<@`/`~` で O(log N) 化。
 - **`daterange` + `EXCLUDE` 制約**: `law_revision.enforcement_period` の重複防止を制約で表現できる（アプリ側ロジック不要）。
 - **`tsvector` 標準装備**: `GENERATED ALWAYS AS ... STORED` が 12 以降で使え、検索カラムをトリガなしで自動同期できる。
-- **拡張入手性**: `pg_bigm` / `pgroonga` ともマネージド対応有無に差があるため、§5 で再検討。
+- **拡張入手性**: `pg_bigm` は主要マネージド PG（AWS RDS/Aurora、Cloud SQL、Azure Database 等）で利用可能。`tsvector` は標準搭載、`textsearch_ja`（MeCab トークナイザ）は本番イメージへ同梱する。
 - **バージョン根拠**: 16 はメジャー LTS 相当で `pg_stat_io` 等の運用観測が強化。15 以下は不採用。
 
 ### 2.5 ORM: SQLAlchemy 2.x (async) + asyncpg
@@ -79,6 +79,6 @@
 ### 2.10 テスト: pytest + pytest-asyncio + testcontainers
 
 - **pytest-asyncio**: `asyncio_mode = "auto"` で async テストを素直に書く。
-- **testcontainers-python**: Postgres を Docker で起動し、Alembic で最新スキーマを適用 → 1 法令投入 → API を叩く統合テストを CI で回す。スキーマ拡張（`pg_bigm`/`pgroonga`/`ltree`）を入れたカスタムイメージを使う。
+- **testcontainers-python**: Postgres を Docker で起動し、Alembic で最新スキーマを適用 → 1 法令投入 → API を叩く統合テストを CI で回す。`pg_bigm` / `ltree` / `textsearch_ja`（MeCab）を入れたカスタムイメージを使う。
 - **スナップショットテスト**: `syrupy` で e-Gov 実 API のレスポンスを録画し、本実装との差分検出。互換性維持のレグレッション防止。
 - **代替検討**: SQLite はスキーマ機能（`ltree`/`tsvector`/`pg_bigm`/`EXCLUDE`）を持たないため不採用。インメモリ実行のために妥協はしない。
