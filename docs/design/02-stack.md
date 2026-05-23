@@ -3,7 +3,7 @@
 | 層 | 採用 | 備考 |
 |---|---|---|
 | 言語 | Python 3.12+ | `pyproject.toml` を採用 |
-| パッケージ管理 | uv（推奨）または Poetry | 未決定。要確認 |
+| パッケージ管理 | uv | `uv.lock` をコミットして再現性確保 |
 | Web | FastAPI + Uvicorn / Gunicorn | OpenAPI 自動生成を v2 仕様に合わせる |
 | DB | PostgreSQL 16 | 全文検索は `pg_bigm` + `tsvector` のハイブリッド構成（§5）|
 | ORM | SQLAlchemy 2.x（async） | `asyncpg` ドライバ |
@@ -23,11 +23,12 @@
 - **`asyncio` 安定性**: `TaskGroup`・`except*`（PEP 654）を素直に書ける。取り込みパイプラインで法令単位の並行処理を回す際に有効。
 - **下限の根拠**: e-Gov 法令データは年代物の漢字（外字含む）を扱う。`unicodedata` の Unicode 15.0 対応バージョンを引きたい。
 
-### 2.2 パッケージ管理: uv（推奨） / Poetry
+### 2.2 パッケージ管理: uv
 
-- **uv（第1候補）**: Rust 製で `pip install`/`venv`/`pip-tools` 相当を一括で速い。`uv.lock` をリポジトリに固定して再現性確保。CI のセットアップが最短になる。
-- **Poetry（第2候補）**: 採用実績が多く、社内既存ツールチェインに合わせる場合に選択。
-- **避けたい**: 素の `pip` + `requirements.txt`（依存解決が貧弱で本プロジェクト規模では運用負荷が高い）。
+- **uv 一択**: Rust 製で `pip install` / `venv` / `pip-tools` 相当を一括で速く実行できる。`uv.lock` をリポジトリにコミットして再現性を確保。CI のセットアップが最短になる。
+- **不採用**:
+  - **Poetry**: 採用実績はあるが、uv に対する速度・再現性・実装の単純さの面で優位性がなく、ツールチェインを一本化するため不採用。
+  - **素の `pip` + `requirements.txt`**: 依存解決が貧弱で、本プロジェクト規模では運用負荷が高い。
 
 ### 2.3 Web: FastAPI + Uvicorn / Gunicorn
 
