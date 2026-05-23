@@ -10,9 +10,9 @@
 |---|---|---|---|
 | GET | `/api/2/laws` | 法令一覧取得 | 14 個のクエリパラメータを Pydantic で受け、`law_revision` を中心に絞り込み |
 | GET | `/api/2/law_revisions/{law_id_or_num}` | 法令履歴一覧取得 | `law` をキーに `law_revision` を全件返却 |
-| GET | `/api/2/law_data/{law_id_or_num_or_revision_id}` | 法令本文取得（JSON/XML） | `law_xml` から原文 XML を取り出し or `law_node` から再構築 |
+| GET | `/api/2/law_data/{law_id_or_num_or_revision_id}` | 法令本文取得（JSON/XML） | `law_xml` から原文 XML を取り出し or `law_node` から再構築。`omit_amendment_suppl_provision=true` は `suppl_type='Amend'` サブツリーを SQL で除外（§11.4）。`json_format=full/light` はインタフェース互換のみ維持し、詳細は最も容易な実装（§10-9 / §11.11）|
 | GET | `/api/2/law_file/{file_type}/{law_id_or_num_or_revision_id}` | 法令本文ファイル | **1st リリース対応形式は `xml` / `json` のみ**（§10-3）。`html` / `rtf` / `docx` は **400 Bad Request**。将来追加検討は §11.10。`xml` / `json` は DB から再構築 |
-| GET | `/api/2/attachment/{law_revision_id}` | 添付ファイル | `src` 指定で単体返却、未指定で Zip |
+| GET | `/api/2/attachment/{law_revision_id}` | 添付ファイル | `src` 指定で単体返却（S3 / SeaweedFS から fetch して透過プロキシ）、未指定で Zip 一括返却（§11.2）。`include_attached_file_content` で `attached_files_info.image_data` の Base64 同梱可 |
 | GET | `/api/2/keyword` | キーワード検索 | pg_bigm + tsvector ハイブリッド検索（§5）→ `law_node` ヒット位置 |
 
 ### 7.3 共通仕様
