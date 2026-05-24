@@ -229,19 +229,19 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "pydantic", specifier = ">=2.9" },
-    { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+    { name = "fastapi", specifier = ">=0.136" },
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "pydantic-settings", specifier = ">=2.14" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.47" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28" },
-    { name = "mypy", specifier = ">=1.13" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.7" },
+    { name = "mypy", specifier = ">=2.1" },
+    { name = "pytest", specifier = ">=9.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3" },
+    { name = "ruff", specifier = ">=0.15" },
 ]
 
 [[package]]
