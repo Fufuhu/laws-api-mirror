@@ -1,5 +1,7 @@
 # laws-api-mirror
 
+[![test](https://github.com/Fufuhu/laws-api-mirror/actions/workflows/test.yml/badge.svg)](https://github.com/Fufuhu/laws-api-mirror/actions/workflows/test.yml)
+
 e-Gov 法令 API v2 (`https://laws.e-gov.go.jp/api/2/`) と互換性のあるミラーサーバー。法令データを PostgreSQL に正規化して取り込み、FastAPI で再提供する。
 
 設計ドキュメントは [`docs/design/`](./docs/design/README.md) を参照。

@@ -1,0 +1,42 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      # 統合テスト用のカスタム PostgreSQL イメージ（pg_bigm / ltree 同梱）を先に用意する。
+      # testcontainers はこのローカルイメージを使う（無ければ統合テストはスキップされる）。
+      - name: Build PostgreSQL image
+        run: docker build -t laws-api-mirror-pg:16 docker/postgres/
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff (lint)
+        run: uv run ruff check src tests
+
+      - name: Ruff (format)
+        run: uv run ruff format --check src tests migrations/env.py
+
+      - name: Mypy
+        run: uv run mypy
+
+      - name: Pytest
+        run: uv run pytest -q
