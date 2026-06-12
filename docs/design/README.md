@@ -2,6 +2,13 @@
 
 法令API v2 を PostgreSQL に取り込み、FastAPI で再提供するプロジェクトの設計ドキュメント。
 
+> **本ドキュメント群は仕様・意思決定の記録**です。実装状況（実装済みの機能・使い方）は
+> リポジトリ直下の [`README.md`](../../README.md) と [`CLAUDE.md`](../../CLAUDE.md) を参照してください。
+>
+> 実装済みの概要: 取得（一括 Zip）→ 取り込み（parse → `law_node` 投入 → text_search 生成）→
+> 検索（pg_bigm + tsvector）→ v2 互換 API 5 本（`/laws` `/law_revisions` `/law_data` `/law_file`
+> `/keyword`）→ Procrastinate ワーカーによる日次差分。未実装: `/attachment`（添付・§4.8/§11.2）。
+
 ## 目次
 
 1. [目的とスコープ](./01-目的とスコープ.md)
