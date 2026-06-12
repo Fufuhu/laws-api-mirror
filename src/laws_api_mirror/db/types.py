@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import cast
+from sqlalchemy.sql.elements import BindParameter, ColumnElement
 from sqlalchemy.types import UserDefinedType
 
 
@@ -14,3 +16,8 @@ class LTREE(UserDefinedType[str]):
 
     def get_col_spec(self, **kw: Any) -> str:
         return "ltree"
+
+    def bind_expression(self, bindvalue: BindParameter[str]) -> ColumnElement[str]:
+        # バインドパラメータ（text）を ltree に明示キャストする。
+        # text → ltree の暗黙キャストが無く、パラメータ化 INSERT が失敗するのを防ぐ。
+        return cast(bindvalue, LTREE())
