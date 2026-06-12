@@ -13,13 +13,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-          python-version: "3.13"
+          python-version: "3.14"
 
       # 統合テスト用のカスタム PostgreSQL イメージ（pg_bigm / ltree 同梱）を先に用意する。
       # testcontainers はこのローカルイメージを使う（無ければ統合テストはスキップされる）。
