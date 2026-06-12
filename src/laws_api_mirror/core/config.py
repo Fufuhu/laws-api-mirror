@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     app_name: str = "laws-api-mirror"
     api_base_path: str = "/api/2"
 
+    #: データ保存先 PostgreSQL への接続 URL（SQLAlchemy async / asyncpg ドライバ）。
+    #: docker-compose の既定値に合わせる。本番・CI は環境変数 DATABASE_URL で上書きする。
+    database_url: str = "postgresql+asyncpg://laws:laws@localhost:5432/laws"
+
     # --- 全件ダウンロード（docs/design/12-全件ダウンロード.md §12.2 / §12.7） ---
     #: e-Gov XML 一括ダウンロードのベース URL
     bulkdownload_base_url: str = "https://laws.e-gov.go.jp/bulkdownload"

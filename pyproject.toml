@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.13",
     "pydantic-settings>=2.14",
     "httpx>=0.28",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
 ]
 
 [project.scripts]
@@ -40,6 +43,10 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "RUF"]
 # 日本語コメント・文字列中の全角記号（（）：等）を曖昧 Unicode として誤検知するため無効化
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI の依存性注入（引数デフォルトでの Depends 呼び出し）は定石のため B008 の対象外にする
+extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.mypy]
 python_version = "3.12"
