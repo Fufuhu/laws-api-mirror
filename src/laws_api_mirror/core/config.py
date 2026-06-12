@@ -44,5 +44,10 @@ class Settings(BaseSettings):
     #: ストリーミング受信のチャンクサイズ（バイト）。既定 1 MiB。
     download_chunk_size: int = 1 << 20
 
+    @property
+    def procrastinate_dsn(self) -> str:
+        """Procrastinate（psycopg）用の DSN。asyncpg ドライバ指定を外す。"""
+        return self.database_url.replace("+asyncpg", "")
+
 
 settings = Settings()

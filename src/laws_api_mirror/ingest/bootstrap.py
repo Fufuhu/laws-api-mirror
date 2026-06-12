@@ -72,13 +72,14 @@ async def bootstrap_from_zip(
     *,
     session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession] = SessionFactory,
     drop_indexes: bool = True,
+    kind: str = "full",
 ) -> BootstrapSummary:
-    """一括 Zip の全法令を DB に投入する。"""
+    """一括 Zip の全法令を DB に投入する。``kind`` は ingest_run の種別（full / delta）。"""
     entries = list(iter_law_xml(zip_path))
     total = len(entries)
 
     async with session_factory() as session, session.begin():
-        run = IngestRun(kind="full", status="running", started_at=datetime.now(UTC))
+        run = IngestRun(kind=kind, status="running", started_at=datetime.now(UTC))
         session.add(run)
         await session.flush()
         run_id = run.id

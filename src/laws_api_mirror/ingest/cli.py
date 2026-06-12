@@ -77,6 +77,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="二次索引を保持したまま投入する（既定は DROP→後構築で高速化）",
     )
     bootstrap.set_defaults(func=_run_bootstrap)
+
+    worker = subparsers.add_parser(
+        "worker", help="Procrastinate ワーカーを起動する（取り込みジョブを実行）"
+    )
+    worker.add_argument(
+        "--queue", action="append", default=None, help="処理するキュー（既定: ingest）"
+    )
+    worker.set_defaults(func=_run_worker)
+
+    enqueue_delta = subparsers.add_parser(
+        "enqueue-delta", help="指定日の差分取り込みジョブを投入する"
+    )
+    enqueue_delta.add_argument(
+        "--update-date", type=_parse_date, required=True, help="基準日 YYYYMMDD"
+    )
+    enqueue_delta.set_defaults(func=_run_enqueue_delta)
     return parser
 
 
@@ -126,6 +142,25 @@ async def _run_bootstrap(args: argparse.Namespace) -> int:
         )
     )
     return 0 if summary.failed == 0 else 1
+
+
+async def _run_worker(args: argparse.Namespace) -> int:
+    from laws_api_mirror.ingest.jobs import procrastinate_app
+
+    queues = args.queue or ["ingest"]
+    async with procrastinate_app.open_async():
+        await procrastinate_app.run_worker_async(queues=queues)
+    return 0
+
+
+async def _run_enqueue_delta(args: argparse.Namespace) -> int:
+    from laws_api_mirror.ingest.jobs import ingest_delta, procrastinate_app
+
+    update_date: date = args.update_date
+    async with procrastinate_app.open_async():
+        job_id = await ingest_delta.defer_async(update_date=update_date.strftime("%Y%m%d"))
+    print(f"差分取り込みジョブを投入しました: job_id={job_id} update_date={update_date:%Y%m%d}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
