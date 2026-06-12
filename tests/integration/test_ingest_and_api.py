@@ -102,3 +102,23 @@ async def test_law_file_unsupported_format(client: AsyncClient, ingested: str) -
     for file_type in ("html", "rtf", "docx"):
         resp = await client.get(f"/api/2/law_file/{file_type}/{ingested}")
         assert resp.status_code == 400
+
+
+async def test_keyword_boolean_and(client: AsyncClient, ingested: str) -> None:
+    """AND 検索: 両語を含むノードのみヒットする。"""
+    both = await client.get("/api/2/keyword", params={"keyword": "勅令 AND 政令"})
+    assert both.json()["total_count"] >= 1
+    missing = await client.get("/api/2/keyword", params={"keyword": "勅令 AND 存在しない語句"})
+    assert missing.json()["total_count"] == 0
+
+
+async def test_keyword_boolean_not(client: AsyncClient, ingested: str) -> None:
+    """NOT 検索: 除外語を含むノードは外れる（本文は勅令と政令が同居）。"""
+    resp = await client.get("/api/2/keyword", params={"keyword": "勅令 NOT 政令"})
+    assert resp.json()["total_count"] == 0
+
+
+async def test_keyword_wildcard(client: AsyncClient, ingested: str) -> None:
+    """ワイルドカード: 勅* が勅令にヒットする。"""
+    resp = await client.get("/api/2/keyword", params={"keyword": "勅*"})
+    assert resp.json()["total_count"] >= 1

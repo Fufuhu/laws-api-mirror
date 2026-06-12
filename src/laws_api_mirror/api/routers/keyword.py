@@ -1,10 +1,9 @@
-"""キーワード検索 API（`GET /api/2/keyword`、設計 §5 / §7.2）。
+"""キーワード検索 API（`GET /api/2/keyword`、設計 §5 / §7.1 / §7.2）。
 
-pg_bigm（``text_plain`` の部分一致）と tsvector（``text_search`` の形態素一致）の
-**ハイブリッド**でヒットした law_node を、法令（リビジョン）ごとにまとめて返す。
-
-1st リリースはキーワードを 1 つの語句として扱う。検索式（ワイルドカード・AND/OR/NOT、
-§7.1）の解析と関連度ランキングは後続に委ねる。
+検索式（AND / OR / NOT・括弧・ワイルドカード ``*`` ``?``・句）を解析し、pg_bigm が効く
+``text_plain`` の LIKE ブール条件にコンパイルしてヒットした law_node を、法令
+（リビジョン）ごとにまとめて返す（§5 / §7.1）。tsvector（``text_search``）は別経路の
+索引として保持し、関連度ランキング等は後続に委ねる。
 """
 
 from __future__ import annotations
@@ -12,31 +11,26 @@ from __future__ import annotations
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, distinct, func, or_, select
+from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.pagination import compute_next_offset
+from laws_api_mirror.api.query import compile_condition, highlight_terms, parse_query
 from laws_api_mirror.api.schemas import KeywordItem, KeywordResponse, KeywordSentence
 from laws_api_mirror.db.models import Law, LawNode, LawRevision
 from laws_api_mirror.db.session import get_session
-from laws_api_mirror.ingest.search import tokenize
 
 router = APIRouter(prefix="/api/2", tags=["keyword"])
 
 
-def highlight_text(value: str, keyword: str, tokens: list[str], tag: str) -> str:
-    """ヒット箇所をハイライトタグで囲む。
-
-    語句が部分一致するならその語句を、しないなら各形態素トークンを囲む。
-    """
+def highlight_text(value: str, terms: list[str], tag: str) -> str:
+    """ヒット箇所（肯定リテラル）をハイライトタグで囲む。"""
     open_tag, close_tag = f"<{tag}>", f"</{tag}>"
-    if keyword and keyword in value:
-        return value.replace(keyword, f"{open_tag}{keyword}{close_tag}")
     result = value
-    for token in tokens:
-        if token and token in result:
-            result = result.replace(token, f"{open_tag}{token}{close_tag}")
+    for term in terms:
+        if term and term in result:
+            result = result.replace(term, f"{open_tag}{term}{close_tag}")
     return result
 
 
@@ -49,14 +43,15 @@ async def keyword_search(
     highlight_tag: str = Query("span", description="ハイライトに使うタグ名"),
     session: AsyncSession = Depends(get_session),
 ) -> KeywordResponse:
-    tokens = [t for t in tokenize(keyword).split(" ") if t]
+    node = parse_query(keyword)
+    if node is None:
+        return KeywordResponse(total_count=0, sentence_count=0, next_offset=None, items=[])
 
-    # ハイブリッド一致条件: bigm 部分一致 OR tsvector 形態素一致
-    clauses = [LawNode.text_plain.like(f"%{keyword}%")]
-    if tokens:
-        tsquery = func.to_tsquery("simple", " & ".join(tokens))
-        clauses.append(LawNode.text_search.op("@@")(tsquery))
-    match = and_(LawNode.text_plain.is_not(None), or_(*clauses))
+    terms = highlight_terms(node)
+    match = and_(
+        LawNode.text_plain.is_not(None),
+        compile_condition(node, LawNode.text_plain),
+    )
 
     sentence_count = (
         await session.scalar(select(func.count()).select_from(LawNode).where(match)) or 0
@@ -105,7 +100,7 @@ async def keyword_search(
             bucket.append(
                 KeywordSentence(
                     position=path_text,
-                    text=highlight_text(text_plain, keyword, tokens, highlight_tag),
+                    text=highlight_text(text_plain, terms, highlight_tag),
                 )
             )
 
