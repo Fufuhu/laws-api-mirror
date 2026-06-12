@@ -28,6 +28,7 @@ from laws_api_mirror.db.session import SessionFactory
 from laws_api_mirror.ingest.archive import iter_law_xml
 from laws_api_mirror.ingest.load import load_parsed_law
 from laws_api_mirror.ingest.parse import parse_law
+from laws_api_mirror.ingest.search import populate_text_search
 
 #: ロード前に DROP し、投入後に再作成する law_node の二次索引（§13.4）
 _LAW_NODE_SECONDARY_INDEXES = [
@@ -90,6 +91,7 @@ async def bootstrap_from_zip(
     inserted = 0
     failed = 0
     node_count = 0
+    text_searched = 0
     failures: list[tuple[str, str]] = []
 
     for entry in entries:
@@ -102,6 +104,10 @@ async def bootstrap_from_zip(
                     law_revision_id=entry.law_revision_id,
                     is_current_latest=None,
                 )
+                # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
+                searched = await populate_text_search(
+                    session, law_revision_id=entry.law_revision_id
+                )
                 session.add(
                     IngestLawEvent(
                         ingest_run_id=run_id,
@@ -111,6 +117,7 @@ async def bootstrap_from_zip(
                 )
             inserted += 1
             node_count += result.node_count
+            text_searched += searched
         except Exception as exc:  # 個別失敗は記録して継続（§11.12.3）
             failed += 1
             message = str(exc)
@@ -140,6 +147,7 @@ async def bootstrap_from_zip(
                 "inserted": inserted,
                 "failed": failed,
                 "node_count": node_count,
+                "text_searched": text_searched,
             }
 
     return BootstrapSummary(
