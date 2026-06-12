@@ -9,10 +9,12 @@ dependencies = [
     "uvicorn[standard]>=0.47",
     "pydantic>=2.13",
     "pydantic-settings>=2.14",
+    "httpx>=0.28",
 ]
 
 [project.scripts]
 laws-api-mirror = "laws_api_mirror.__main__:main"
+laws-ingest = "laws_api_mirror.ingest.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -36,6 +38,8 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+# 日本語コメント・文字列中の全角記号（（）：等）を曖昧 Unicode として誤検知するため無効化
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"

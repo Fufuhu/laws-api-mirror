@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 取り込み landing zone（生 Zip。コミットしない）
+/var/
