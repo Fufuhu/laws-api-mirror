@@ -51,6 +51,8 @@ async def _download(
 
 
 async def test_success_writes_file_and_meta(tmp_path: Path) -> None:
+    """正常取得時に、生 Zip が landing キーへ書かれ、sha256/byte_size 等の成果物メタと
+    サイドカー JSON が正しく生成され、.part が残らないことを確認する（§12.5 / §12.7）。"""
     settings = _settings(tmp_path)
     sleep = _SleepRecorder()
     transport = httpx.MockTransport(lambda request: httpx.Response(200, content=PAYLOAD))
@@ -76,6 +78,8 @@ async def test_success_writes_file_and_meta(tmp_path: Path) -> None:
 
 
 async def test_retries_then_succeeds(tmp_path: Path) -> None:
+    """503 を 1 度受けても指数バックオフで再試行し、次の 200 で取得完了する
+    ことを確認する（§12.7）。"""
     settings = _settings(tmp_path)
     sleep = _SleepRecorder()
     calls: list[httpx.Request] = []
@@ -94,6 +98,8 @@ async def test_retries_then_succeeds(tmp_path: Path) -> None:
 
 
 async def test_respects_retry_after_header(tmp_path: Path) -> None:
+    """503 応答に Retry-After があれば、バックオフではなくその秒数だけ
+    待機することを確認する（§12.7）。"""
     settings = _settings(tmp_path)
     sleep = _SleepRecorder()
     calls: list[httpx.Request] = []
@@ -110,6 +116,8 @@ async def test_respects_retry_after_header(tmp_path: Path) -> None:
 
 
 async def test_exhausts_retries_and_cleans_up(tmp_path: Path) -> None:
+    """503 が続き最大試行回数を使い切ると DownloadError となり、最終試行後は待機せず、
+    不完全な成果物（dest / .part）を残さないことを確認する（§12.7）。"""
     settings = _settings(tmp_path, download_max_retries=3)
     sleep = _SleepRecorder()
     calls: list[httpx.Request] = []
@@ -129,6 +137,8 @@ async def test_exhausts_retries_and_cleans_up(tmp_path: Path) -> None:
 
 
 async def test_client_error_is_not_retried(tmp_path: Path) -> None:
+    """4xx（404 等）は回復不能として再試行せず、即座に DownloadError に
+    なることを確認する（§12.7）。"""
     settings = _settings(tmp_path)
     sleep = _SleepRecorder()
     calls: list[httpx.Request] = []
