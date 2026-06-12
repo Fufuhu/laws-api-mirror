@@ -66,6 +66,13 @@ class LawsResponse(BaseModel):
     laws: list[LawListItem]
 
 
+class LawRevisionsResponse(BaseModel):
+    """`GET /api/2/law_revisions/{id}` のレスポンス（法令履歴一覧）。"""
+
+    law_info: LawInfo
+    revisions: list[RevisionInfo]
+
+
 class KeywordSentence(BaseModel):
     """検索ヒットした文（ハイライトタグ付き）。"""
 

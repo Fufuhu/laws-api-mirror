@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from laws_api_mirror.api.schemas import LawInfo, LawListItem, LawsResponse, RevisionInfo
+from laws_api_mirror.api.schemas import (
+    LawInfo,
+    LawListItem,
+    LawRevisionsResponse,
+    LawsResponse,
+    RevisionInfo,
+)
 
 
 def test_law_info_serializes_date_as_iso() -> None:
@@ -29,3 +35,14 @@ def test_laws_response_shape() -> None:
     assert set(dumped) == {"total_count", "count", "next_offset", "laws"}
     assert dumped["laws"][0]["law_info"]["law_id"] == "X"
     assert dumped["laws"][0]["revision_info"]["law_revision_id"] == "X_r1"
+
+
+def test_law_revisions_response_shape() -> None:
+    """履歴一覧が law_info と revisions[] の構造を持つ。"""
+    resp = LawRevisionsResponse(
+        law_info=LawInfo(law_id="X"),
+        revisions=[RevisionInfo(law_revision_id="X_r1"), RevisionInfo(law_revision_id="X_r2")],
+    )
+    dumped = resp.model_dump(mode="json")
+    assert set(dumped) == {"law_info", "revisions"}
+    assert [r["law_revision_id"] for r in dumped["revisions"]] == ["X_r1", "X_r2"]
