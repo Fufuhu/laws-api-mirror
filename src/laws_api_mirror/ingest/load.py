@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,7 +25,7 @@ from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from laws_api_mirror.db.models import Law, LawNode, LawRevision
+from laws_api_mirror.db.models import Law, LawNode, LawRevision, LawXml
 from laws_api_mirror.ingest.parse import ParsedLaw, ParsedNode
 
 
@@ -93,15 +95,39 @@ async def load_parsed_law(
     *,
     law_revision_id: str,
     is_current_latest: bool | None = True,
+    raw_xml: bytes | None = None,
 ) -> LoadResult:
-    """1 法令を DB に投入する。呼び出し側がトランザクション境界を管理する。"""
+    """1 法令を DB に投入する。呼び出し側がトランザクション境界を管理する。
+
+    ``raw_xml`` を渡すと原文 XML を ``law_xml`` に gzip 保存する（/law_data の再提供用、§4.6）。
+    """
     if parsed.law_id is None:
         raise ValueError("law_id が必要です（Zip のフォルダ名等から与える）")
 
     await _upsert_law(session, parsed)
     await _upsert_law_revision(session, parsed, law_revision_id, is_current_latest)
+    if raw_xml is not None:
+        await _upsert_law_xml(session, law_revision_id, raw_xml)
     count = await _replace_nodes(session, parsed, law_revision_id)
     return LoadResult(parsed.law_id, law_revision_id, count)
+
+
+async def _upsert_law_xml(session: AsyncSession, law_revision_id: str, raw_xml: bytes) -> None:
+    stmt = pg_insert(LawXml).values(
+        law_revision_id=law_revision_id,
+        xml_gz=gzip.compress(raw_xml),
+        xml_sha256=hashlib.sha256(raw_xml).digest(),
+        byte_size=len(raw_xml),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[LawXml.law_revision_id],
+        set_={
+            "xml_gz": stmt.excluded.xml_gz,
+            "xml_sha256": stmt.excluded.xml_sha256,
+            "byte_size": stmt.excluded.byte_size,
+        },
+    )
+    await session.execute(stmt)
 
 
 async def _upsert_law(session: AsyncSession, parsed: ParsedLaw) -> None:

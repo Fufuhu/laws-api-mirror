@@ -1,0 +1,102 @@
+"""法令本文取得 API（`GET /api/2/law_data/{id}`、設計 §7.2 / §7.4）。
+
+``law_xml`` に保存した原文 XML を源泉に、本文（または ``elm`` のサブツリー）を
+JSON ツリー / Base64 XML で返す。id は law_revision_id / law_id / law_num を解決する。
+"""
+
+from __future__ import annotations
+
+import gzip
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from lxml import etree
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from laws_api_mirror.api.mappers import build_law_info, build_revision_info
+from laws_api_mirror.api.rendering import (
+    element_to_full,
+    element_to_light,
+    element_to_xml_base64,
+    navigate_elm,
+)
+from laws_api_mirror.api.schemas import LawDataResponse
+from laws_api_mirror.db.models import Law, LawRevision, LawXml
+from laws_api_mirror.db.session import get_session
+
+router = APIRouter(prefix="/api/2", tags=["law_data"])
+
+
+async def _resolve(session: AsyncSession, identifier: str) -> tuple[Law, LawRevision] | None:
+    """id を law_revision_id / law_id / law_num の順で解決する。"""
+    by_revision = (
+        await session.execute(
+            select(Law, LawRevision)
+            .join(LawRevision, LawRevision.law_id == Law.law_id)
+            .where(LawRevision.law_revision_id == identifier)
+        )
+    ).first()
+    if by_revision is not None:
+        return by_revision[0], by_revision[1]
+
+    # law_id / law_num → 代表（最新施行日）リビジョン
+    latest = (
+        await session.execute(
+            select(Law, LawRevision)
+            .join(LawRevision, LawRevision.law_id == Law.law_id)
+            .where(or_(Law.law_id == identifier, Law.law_num == identifier))
+            .order_by(LawRevision.law_revision_id.desc())
+            .limit(1)
+        )
+    ).first()
+    if latest is not None:
+        return latest[0], latest[1]
+    return None
+
+
+@router.get(
+    "/law_data/{law_id_or_num_or_revision_id}",
+    response_model=LawDataResponse,
+    summary="法令本文取得（JSON/XML）",
+)
+async def get_law_data(
+    law_id_or_num_or_revision_id: str,
+    law_full_text_format: str = Query("json", pattern="^(json|xml)$"),
+    json_format: str = Query("full", pattern="^(full|light)$"),
+    response_format: str = Query("json", pattern="^(json|xml)$"),
+    elm: str | None = Query(None, description="取得する要素（例 MainProvision-Article_9）"),
+    session: AsyncSession = Depends(get_session),
+) -> LawDataResponse:
+    if response_format == "xml":
+        raise HTTPException(status_code=400, detail="response_format=xml は未対応です")
+
+    resolved = await _resolve(session, law_id_or_num_or_revision_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="法令が見つかりません")
+    law, revision = resolved
+
+    xml_gz = await session.scalar(
+        select(LawXml.xml_gz).where(LawXml.law_revision_id == revision.law_revision_id)
+    )
+    if xml_gz is None:
+        raise HTTPException(status_code=404, detail="法令本文が保存されていません")
+
+    root = etree.fromstring(gzip.decompress(xml_gz))
+    target = root if elm is None else navigate_elm(root, elm)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"elm が見つかりません: {elm}")
+
+    law_full_text: Any
+    if law_full_text_format == "xml":
+        law_full_text = element_to_xml_base64(target)
+    elif json_format == "light":
+        law_full_text = element_to_light(target)
+    else:
+        law_full_text = element_to_full(target)
+
+    return LawDataResponse(
+        law_info=build_law_info(law),
+        revision_info=build_revision_info(revision),
+        law_full_text=law_full_text,
+    )

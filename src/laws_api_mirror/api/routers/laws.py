@@ -10,8 +10,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.pagination import compute_next_offset
-from laws_api_mirror.api.schemas import LawInfo, LawListItem, LawsResponse, RevisionInfo
+from laws_api_mirror.api.schemas import LawListItem, LawsResponse
 from laws_api_mirror.db.models import Law, LawRevision
 from laws_api_mirror.db.session import get_session
 
@@ -63,29 +64,6 @@ async def list_laws(
     return total, rows
 
 
-def _law_info(law: Law) -> LawInfo:
-    return LawInfo(
-        law_type=law.law_type,
-        law_id=law.law_id,
-        law_num=law.law_num,
-        law_num_era=law.law_num_era,
-        law_num_year=law.law_num_year,
-        law_num_type=law.law_num_type,
-        law_num_num=law.law_num_num,
-        promulgation_date=law.promulgation_date,
-    )
-
-
-def _revision_info(revision: LawRevision) -> RevisionInfo:
-    return RevisionInfo(
-        law_revision_id=revision.law_revision_id,
-        law_type=revision.law_type,
-        law_title=revision.law_title,
-        law_title_kana=revision.law_title_kana,
-        abbrev=revision.abbrev,
-    )
-
-
 @router.get("/laws", response_model=LawsResponse, summary="法令一覧取得")
 async def get_laws(
     law_id: str | None = Query(None, description="法令 ID（完全一致）"),
@@ -107,9 +85,9 @@ async def get_laws(
     )
     items = [
         LawListItem(
-            law_info=_law_info(law),
-            revision_info=_revision_info(revision),
-            current_revision_info=_revision_info(revision),
+            law_info=build_law_info(law),
+            revision_info=build_revision_info(revision),
+            current_revision_info=build_revision_info(revision),
         )
         for law, revision in rows
     ]

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -63,3 +64,16 @@ class LawsResponse(BaseModel):
     count: int
     next_offset: int | None = None
     laws: list[LawListItem]
+
+
+class LawDataResponse(BaseModel):
+    """`GET /api/2/law_data/{id}` のレスポンス。
+
+    ``law_full_text`` は ``law_full_text_format`` により JSON ツリー（dict）か
+    Base64 XML 文字列（str）。1st リリースで ``attached_files_info`` は null。
+    """
+
+    attached_files_info: None = None
+    law_info: LawInfo
+    revision_info: RevisionInfo
+    law_full_text: Any

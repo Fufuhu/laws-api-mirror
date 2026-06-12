@@ -103,6 +103,7 @@ async def bootstrap_from_zip(
                     parsed,
                     law_revision_id=entry.law_revision_id,
                     is_current_latest=None,
+                    raw_xml=entry.xml,
                 )
                 # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
                 searched = await populate_text_search(
