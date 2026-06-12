@@ -38,6 +38,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic の自動生成リビジョンは生成器の整形に従うため lint 対象外にする
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
