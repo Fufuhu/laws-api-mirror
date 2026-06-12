@@ -66,6 +66,28 @@ class LawsResponse(BaseModel):
     laws: list[LawListItem]
 
 
+class KeywordSentence(BaseModel):
+    """検索ヒットした文（ハイライトタグ付き）。"""
+
+    position: str
+    text: str
+
+
+class KeywordItem(BaseModel):
+    law_info: LawInfo
+    revision_info: RevisionInfo
+    sentences: list[KeywordSentence]
+
+
+class KeywordResponse(BaseModel):
+    """`GET /api/2/keyword` のレスポンス。"""
+
+    total_count: int
+    sentence_count: int
+    next_offset: int | None = None
+    items: list[KeywordItem]
+
+
 class LawDataResponse(BaseModel):
     """`GET /api/2/law_data/{id}` のレスポンス。
 
