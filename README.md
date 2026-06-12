@@ -23,7 +23,7 @@ open http://127.0.0.1:8000/docs
 
 ## ステータス
 
-実装は **base 段階**。1st リリースのスコープ・確定方針は [`docs/design/10-open-questions.md`](./docs/design/10-open-questions.md) を参照。
+実装は **base 段階**。1st リリースのスコープ・確定方針は [`docs/design/10-未確定事項.md`](./docs/design/10-未確定事項.md) を参照。
 
 - 実装済: FastAPI 起動・ヘルスチェック・OpenAPI 雛形
 - 未実装: e-Gov API v2 互換エンドポイント、PostgreSQL 連携、取り込みパイプライン、検索、ジョブキュー
