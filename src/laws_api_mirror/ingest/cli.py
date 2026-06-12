@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from datetime import date, datetime
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -64,6 +66,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="画像・様式を含む全データを取得する（既定は XML のみ）",
     )
     download.set_defaults(func=_run_download)
+
+    bootstrap = subparsers.add_parser(
+        "bootstrap", help="一括 Zip から全法令を DB に投入する（Stage 1→Load→索引後構築）"
+    )
+    bootstrap.add_argument("zip_path", help="一括 Zip のパス（landing zone 上の生 Zip）")
+    bootstrap.add_argument(
+        "--keep-indexes",
+        action="store_true",
+        help="二次索引を保持したまま投入する（既定は DROP→後構築で高速化）",
+    )
+    bootstrap.set_defaults(func=_run_bootstrap)
     return parser
 
 
@@ -88,6 +101,31 @@ async def _run_download(args: argparse.Namespace) -> int:
         return 1
     print(artifact.model_dump_json(indent=2))
     return 0
+
+
+async def _run_bootstrap(args: argparse.Namespace) -> int:
+    from laws_api_mirror.ingest.bootstrap import bootstrap_from_zip
+
+    zip_path = Path(args.zip_path)
+    if not zip_path.exists():
+        print(f"Zip が見つかりません: {zip_path}")
+        return 2
+    summary = await bootstrap_from_zip(zip_path, drop_indexes=not args.keep_indexes)
+    print(
+        json.dumps(
+            {
+                "ingest_run_id": summary.ingest_run_id,
+                "total": summary.total,
+                "inserted": summary.inserted,
+                "failed": summary.failed,
+                "node_count": summary.node_count,
+                "failures": summary.failures,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0 if summary.failed == 0 else 1
 
 
 def main(argv: list[str] | None = None) -> int:

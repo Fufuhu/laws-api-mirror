@@ -92,7 +92,7 @@ async def load_parsed_law(
     parsed: ParsedLaw,
     *,
     law_revision_id: str,
-    is_current_latest: bool = True,
+    is_current_latest: bool | None = True,
 ) -> LoadResult:
     """1 法令を DB に投入する。呼び出し側がトランザクション境界を管理する。"""
     if parsed.law_id is None:
@@ -135,7 +135,7 @@ async def _upsert_law_revision(
     session: AsyncSession,
     parsed: ParsedLaw,
     law_revision_id: str,
-    is_current_latest: bool,
+    is_current_latest: bool | None,
 ) -> None:
     stmt = pg_insert(LawRevision).values(
         law_revision_id=law_revision_id,
