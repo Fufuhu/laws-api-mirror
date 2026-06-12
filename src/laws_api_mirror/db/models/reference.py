@@ -40,7 +40,7 @@ class LawType(_CodeLabel):
 
 
 class Category(_CodeLabel):
-    """事項別分類（50 種。001 憲法 … 050 外事）。"""
+    """事項別分類（50 種。コードは e-Gov 実形式の "1".."50"。1 憲法 … 50 外事）。"""
 
     __tablename__ = "category"
 
