@@ -1,0 +1,38 @@
+# 開発・評価用のデータ保存先 PostgreSQL。
+#
+# 設計 §2.4 / §5 / §4.7.1 に対応するカスタムイメージ（pg_bigm + ltree 同梱）を
+# docker/postgres/Dockerfile からビルドして起動する。
+#
+# 使い方:
+#   docker compose up -d            # 初回はイメージをビルドして起動
+#   docker compose up -d --build    # Dockerfile 変更時に再ビルド
+#   docker compose down             # 停止（データは名前付きボリュームに残る）
+#   docker compose down -v          # データごと破棄
+#
+# 接続情報・ポートは .env（.env.example を参照）で上書きできる。
+
+services:
+  postgres:
+    build:
+      context: ./docker/postgres
+    image: laws-api-mirror-pg:16
+    container_name: laws-api-mirror-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-laws}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-laws}
+      POSTGRES_DB: ${POSTGRES_DB:-laws}
+      TZ: Asia/Tokyo
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-laws} -d ${POSTGRES_DB:-laws}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
