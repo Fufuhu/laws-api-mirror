@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from laws_api_mirror import __version__
 from laws_api_mirror.api.routers import keyword as keyword_router
 from laws_api_mirror.api.routers import law_data as law_data_router
+from laws_api_mirror.api.routers import law_file as law_file_router
 from laws_api_mirror.api.routers import law_revisions as law_revisions_router
 from laws_api_mirror.api.routers import laws as laws_router
 from laws_api_mirror.core.config import settings
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(laws_router.router)
     app.include_router(law_revisions_router.router)
     app.include_router(law_data_router.router)
+    app.include_router(law_file_router.router)
     app.include_router(keyword_router.router)
 
     @app.get("/health", tags=["meta"], summary="ヘルスチェック")

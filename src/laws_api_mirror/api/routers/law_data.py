@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from lxml import etree
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror.api.mappers import build_law_info, build_revision_info
@@ -21,38 +21,12 @@ from laws_api_mirror.api.rendering import (
     element_to_xml_base64,
     navigate_elm,
 )
+from laws_api_mirror.api.repository import resolve_law
 from laws_api_mirror.api.schemas import LawDataResponse
-from laws_api_mirror.db.models import Law, LawRevision, LawXml
+from laws_api_mirror.db.models import LawXml
 from laws_api_mirror.db.session import get_session
 
 router = APIRouter(prefix="/api/2", tags=["law_data"])
-
-
-async def _resolve(session: AsyncSession, identifier: str) -> tuple[Law, LawRevision] | None:
-    """id を law_revision_id / law_id / law_num の順で解決する。"""
-    by_revision = (
-        await session.execute(
-            select(Law, LawRevision)
-            .join(LawRevision, LawRevision.law_id == Law.law_id)
-            .where(LawRevision.law_revision_id == identifier)
-        )
-    ).first()
-    if by_revision is not None:
-        return by_revision[0], by_revision[1]
-
-    # law_id / law_num → 代表（最新施行日）リビジョン
-    latest = (
-        await session.execute(
-            select(Law, LawRevision)
-            .join(LawRevision, LawRevision.law_id == Law.law_id)
-            .where(or_(Law.law_id == identifier, Law.law_num == identifier))
-            .order_by(LawRevision.law_revision_id.desc())
-            .limit(1)
-        )
-    ).first()
-    if latest is not None:
-        return latest[0], latest[1]
-    return None
 
 
 @router.get(
@@ -71,7 +45,7 @@ async def get_law_data(
     if response_format == "xml":
         raise HTTPException(status_code=400, detail="response_format=xml は未対応です")
 
-    resolved = await _resolve(session, law_id_or_num_or_revision_id)
+    resolved = await resolve_law(session, law_id_or_num_or_revision_id)
     if resolved is None:
         raise HTTPException(status_code=404, detail="法令が見つかりません")
     law, revision = resolved

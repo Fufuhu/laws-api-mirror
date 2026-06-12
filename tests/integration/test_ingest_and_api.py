@@ -77,3 +77,28 @@ async def test_law_data_not_found(client: AsyncClient, database_url: str) -> Non
     """存在しない id は 404。"""
     resp = await client.get("/api/2/law_data/NONEXISTENT")
     assert resp.status_code == 404
+
+
+async def test_law_file_xml(client: AsyncClient, ingested: str) -> None:
+    """/api/2/law_file/xml は原文 XML をファイルとして返す。"""
+    resp = await client.get(f"/api/2/law_file/xml/{ingested}")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/xml")
+    assert "attachment" in resp.headers["content-disposition"]
+    assert resp.text.lstrip().startswith("<?xml")
+    assert "勅令" in resp.text
+
+
+async def test_law_file_json(client: AsyncClient, ingested: str) -> None:
+    """/api/2/law_file/json は JSON ツリーをファイルとして返す。"""
+    resp = await client.get(f"/api/2/law_file/json/{ingested}")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["tag"] == "Law"
+
+
+async def test_law_file_unsupported_format(client: AsyncClient, ingested: str) -> None:
+    """html / rtf / docx は 400（§10-3）。"""
+    for file_type in ("html", "rtf", "docx"):
+        resp = await client.get(f"/api/2/law_file/{file_type}/{ingested}")
+        assert resp.status_code == 400
