@@ -10,6 +10,20 @@
 #   docker compose down -v          # データごと破棄
 #
 # 接続情報・ポートは .env（.env.example を参照）で上書きできる。
+#
+# 取り込みワーカー（Procrastinate）も同梱する:
+#   docker compose up -d --build    # postgres + migrate(Alembic) + worker
+# worker は日次 03:00 に差分を自動取り込みする（§10-5）。手動投入は:
+#   uv run laws-ingest enqueue-delta --update-date YYYYMMDD
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/app/Dockerfile
+  image: laws-api-mirror-app:dev
+  environment:
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-laws}:${POSTGRES_PASSWORD:-laws}@postgres:5432/${POSTGRES_DB:-laws}
+    TZ: Asia/Tokyo
 
 services:
   postgres:
@@ -33,6 +47,28 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+
+  # スキーマ適用（Alembic）を 1 回だけ実行して終了する。
+  migrate:
+    <<: *app
+    container_name: laws-api-mirror-migrate
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 取り込みワーカー（Procrastinate）。マイグレーション完了後に常駐起動する。
+  worker:
+    <<: *app
+    container_name: laws-api-mirror-worker
+    command: ["laws-ingest", "worker"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
