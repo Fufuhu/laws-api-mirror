@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror import __version__
+from laws_api_mirror.api.routers import laws as laws_router
 from laws_api_mirror.core.config import settings
 from laws_api_mirror.db.session import check_connection, dispose_engine, get_session
 
@@ -20,12 +21,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="laws-api-mirror",
         version=__version__,
-        description=(
-            "e-Gov 法令 API v2 互換ミラーサーバー。"
-            "本リリース時点では雛形のみで、互換エンドポイントは未実装。"
-        ),
+        description="e-Gov 法令 API v2 互換ミラーサーバー。",
         lifespan=lifespan,
     )
+
+    app.include_router(laws_router.router)
 
     @app.get("/health", tags=["meta"], summary="ヘルスチェック")
     async def health() -> dict[str, str]:

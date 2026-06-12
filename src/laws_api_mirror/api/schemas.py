@@ -1,0 +1,65 @@
+"""API レスポンススキーマ（e-Gov 法令 API v2 互換、設計 §7）。
+
+1st リリースは **インタフェース互換**（フィールド名・型・構造）を維持する方針（§10-9）。
+取り込み済みデータで埋められないフィールドは ``null`` を返す。
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from pydantic import BaseModel
+
+
+class LawInfo(BaseModel):
+    """法令メタ（履歴非依存、`law` 由来）。"""
+
+    law_type: str | None = None
+    law_id: str
+    law_num: str | None = None
+    law_num_era: str | None = None
+    law_num_year: int | None = None
+    law_num_type: str | None = None
+    law_num_num: str | None = None
+    promulgation_date: date | None = None
+
+
+class RevisionInfo(BaseModel):
+    """法令履歴メタ（`law_revision` 由来）。未取得項目は null。"""
+
+    law_revision_id: str
+    law_type: str | None = None
+    law_title: str | None = None
+    law_title_kana: str | None = None
+    abbrev: str | None = None
+    category: str | None = None
+    updated: datetime | None = None
+    amendment_promulgate_date: date | None = None
+    amendment_enforcement_date: date | None = None
+    amendment_enforcement_comment: str | None = None
+    amendment_scheduled_enforcement_date: date | None = None
+    amendment_law_id: str | None = None
+    amendment_law_title: str | None = None
+    amendment_law_title_kana: str | None = None
+    amendment_law_num: str | None = None
+    amendment_type: str | None = None
+    repeal_status: str | None = None
+    repeal_date: date | None = None
+    remain_in_force: bool | None = None
+    mission: str | None = None
+    current_revision_status: str | None = None
+
+
+class LawListItem(BaseModel):
+    law_info: LawInfo
+    revision_info: RevisionInfo
+    current_revision_info: RevisionInfo
+
+
+class LawsResponse(BaseModel):
+    """`GET /api/2/laws` のレスポンス。"""
+
+    total_count: int
+    count: int
+    next_offset: int | None = None
+    laws: list[LawListItem]
