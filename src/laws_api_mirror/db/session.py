@@ -7,8 +7,9 @@ SQLAlchemy の async エンジンとセッションファクトリを構築す�
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -40,6 +41,20 @@ def _make_default() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
 
 #: アプリ全体で共有する既定エンジンとセッションファクトリ
 engine, SessionFactory = _make_default()
+
+
+def configure(url: str, *, null_pool: bool = False) -> None:
+    """共有エンジン／セッションファクトリを再構築する（接続先の差し替え、主にテスト用）。
+
+    ``null_pool=True`` で ``NullPool`` を使う（イベントループをまたぐテストでの
+    asyncpg コネクション再利用問題を避ける）。
+    """
+    global engine, SessionFactory
+    kwargs: dict[str, Any] = {"pool_pre_ping": True}
+    if null_pool:
+        kwargs["poolclass"] = NullPool
+    engine = create_async_engine(url, **kwargs)
+    SessionFactory = build_session_factory(engine)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

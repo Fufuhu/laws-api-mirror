@@ -35,6 +35,7 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.15",
     "mypy>=2.1",
+    "testcontainers>=4.8",
 ]
 
 [tool.ruff]
@@ -58,7 +59,7 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["lxml.*", "fugashi.*"]
+module = ["lxml.*", "fugashi.*", "testcontainers.*", "asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
