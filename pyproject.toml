@@ -9,10 +9,20 @@ dependencies = [
     "uvicorn[standard]>=0.47",
     "pydantic>=2.13",
     "pydantic-settings>=2.14",
+    "httpx>=0.28",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
+    "lxml>=5.3",
+    "fugashi[unidic-lite]>=1.3",
+    "procrastinate>=3.8.1",
+    "mcp>=1.27.2",
 ]
 
 [project.scripts]
 laws-api-mirror = "laws_api_mirror.__main__:main"
+laws-ingest = "laws_api_mirror.ingest.cli:main"
+laws-mcp = "laws_api_mirror.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,19 +38,32 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.15",
     "mypy>=2.1",
+    "testcontainers>=4.8",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic の自動生成リビジョンは生成器の整形に従うため lint 対象外にする
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+# 日本語コメント・文字列中の全角記号（（）：等）を曖昧 Unicode として誤検知するため無効化
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI の引数デフォルト（Depends / Query / Path 等）は定石のため B008 の対象外にする
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["lxml.*", "fugashi.*", "testcontainers.*", "asyncpg.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
