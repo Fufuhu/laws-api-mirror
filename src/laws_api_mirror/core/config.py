@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     app_name: str = "laws-api-mirror"
     api_base_path: str = "/api/2"
 
+    # --- MCP サーバー（FastAPI を HTTP 経由で呼ぶプロキシ） ---
+    #: MCP ツールが叩く FastAPI のベース URL
+    api_base_url: str = "http://127.0.0.1:8000"
+    #: MCP（Streamable HTTP）の待受ホスト・ポート（FastAPI と別ポート）
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8765
+
     #: データ保存先 PostgreSQL への接続 URL（SQLAlchemy async / asyncpg ドライバ）。
     #: docker-compose の既定値に合わせる。本番・CI は環境変数 DATABASE_URL で上書きする。
     database_url: str = "postgresql+asyncpg://laws:laws@localhost:5432/laws"
