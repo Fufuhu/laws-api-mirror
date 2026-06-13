@@ -24,12 +24,15 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from laws_api_mirror.core.logging import get_logger
 from laws_api_mirror.db.models import IngestLawEvent, IngestRun
 from laws_api_mirror.db.session import SessionFactory
 from laws_api_mirror.ingest.archive import iter_law_xml, read_csv_meta
 from laws_api_mirror.ingest.load import load_parsed_law
 from laws_api_mirror.ingest.parse import parse_law
 from laws_api_mirror.ingest.search import populate_text_search
+
+_log = get_logger(__name__)
 
 #: ロード前に DROP し、投入後に再作成する law_node の二次索引（§13.4）
 _LAW_NODE_SECONDARY_INDEXES = [
@@ -129,6 +132,8 @@ async def bootstrap_from_zip(
         await session.flush()
         run_id = run.id
 
+    _log.info("ingest.run.started", extra={"run_id": run_id, "kind": kind, "total": total})
+
     saved_defs: dict[str, str] = {}
     if drop_indexes:
         async with session_factory() as session, session.begin():
@@ -171,6 +176,14 @@ async def bootstrap_from_zip(
             message = str(exc)
             if len(failures) < 20:
                 failures.append((entry.law_revision_id, message[:200]))
+            _log.warning(
+                "ingest.law.failed",
+                extra={
+                    "run_id": run_id,
+                    "law_revision_id": entry.law_revision_id,
+                    "error": message[:200],
+                },
+            )
             async with session_factory() as session, session.begin():
                 session.add(
                     IngestLawEvent(
@@ -203,6 +216,19 @@ async def bootstrap_from_zip(
                 "node_count": node_count,
                 "text_searched": text_searched,
             }
+
+    _log.info(
+        "ingest.run.finished",
+        extra={
+            "run_id": run_id,
+            "kind": kind,
+            "total": total,
+            "inserted": inserted,
+            "failed": failed,
+            "node_count": node_count,
+            "text_searched": text_searched,
+        },
+    )
 
     return BootstrapSummary(
         ingest_run_id=run_id,

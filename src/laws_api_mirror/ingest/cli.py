@@ -171,6 +171,10 @@ async def _run_enqueue_delta(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from laws_api_mirror.core.config import settings
+    from laws_api_mirror.core.logging import configure_logging
+
+    configure_logging(settings.log_level, json_format=settings.log_json)
     parser = build_parser()
     args = parser.parse_args(argv)
     result: int = asyncio.run(args.func(args))

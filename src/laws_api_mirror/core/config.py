@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     app_name: str = "laws-api-mirror"
     api_base_path: str = "/api/2"
 
+    # --- 運用・可観測性（C） ---
+    #: ログレベル（DEBUG / INFO / WARNING / ...）
+    log_level: str = "INFO"
+    #: JSON 構造化ログを出すか（false は人間可読フォーマット）
+    log_json: bool = True
+    #: 取り込み鮮度ウィンドウ（時間）。最後の成功がこれより古いと /health/ingest は stale。
+    ingest_freshness_hours: int = 48
+
     # --- MCP サーバー（FastAPI を HTTP 経由で呼ぶプロキシ） ---
     #: MCP ツールが叩く FastAPI のベース URL
     api_base_url: str = "http://127.0.0.1:8000"

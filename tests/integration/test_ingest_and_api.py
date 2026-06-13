@@ -27,6 +27,20 @@ async def test_health_db(client: AsyncClient, database_url: str) -> None:
     assert resp.json() == {"database": "ok"}
 
 
+async def test_health_ingest(client: AsyncClient, ingested: str) -> None:
+    """/health/ingest が取り込み状態を集約して返す（C-1 / C-3）。"""
+    resp = await client.get("/health/ingest")
+    assert resp.status_code == 200
+    body = resp.json()
+    # フィクスチャ投入で full ラン 1 件が成功している
+    assert body["total_runs"] >= 1
+    assert body["status"] in {"ok", "stale"}  # 鮮度は実行時刻依存
+    assert body["last_run"]["kind"] == "full"
+    assert body["last_run"]["status"] == "success"
+    assert body["recent_failures"] == 0
+    assert body["last_success_at"] is not None
+
+
 async def test_laws(client: AsyncClient, ingested: str) -> None:
     """/api/2/laws で投入した法令が引ける。"""
     resp = await client.get("/api/2/laws", params={"law_id": "322CO0000000014"})

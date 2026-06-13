@@ -95,6 +95,28 @@ class KeywordResponse(BaseModel):
     items: list[KeywordItem]
 
 
+class IngestRunInfo(BaseModel):
+    """取り込み実行 1 件の要約（運用監視用）。"""
+
+    id: int
+    kind: str | None = None
+    status: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    stats: dict[str, Any] | None = None
+
+
+class IngestStatusResponse(BaseModel):
+    """`GET /health/ingest` のレスポンス（取り込みの健全性、C-1 / C-3）。"""
+
+    status: str  # never | running | failed | stale | ok
+    total_runs: int
+    last_run: IngestRunInfo | None = None
+    last_success_at: datetime | None = None
+    recent_failures: int = 0
+    failed_samples: list[str] = []
+
+
 class LawDataResponse(BaseModel):
     """`GET /api/2/law_data/{id}` のレスポンス。
 

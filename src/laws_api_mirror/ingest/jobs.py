@@ -21,9 +21,12 @@ from pathlib import Path
 from procrastinate import App, PsycopgConnector
 
 from laws_api_mirror.core.config import settings
+from laws_api_mirror.core.logging import get_logger
 from laws_api_mirror.ingest.bootstrap import bootstrap_from_zip
 from laws_api_mirror.ingest.bulkdownload import BulkDownloadRequest, FileSection
 from laws_api_mirror.ingest.downloader import BulkDownloader
+
+_log = get_logger(__name__)
 
 #: procrastinate スキーマを search_path に含めて接続する
 _SEARCH_PATH = "procrastinate,public"
@@ -66,4 +69,6 @@ async def ingest_delta(update_date: str) -> None:
 async def daily_delta(timestamp: int) -> None:
     """日次 03:00 に前日分の差分を取り込む（§10-5）。"""
     yesterday = (datetime.now(UTC).date() - timedelta(days=1)).strftime("%Y%m%d")
+    _log.info("ingest.daily_delta.started", extra={"update_date": yesterday})
     await _run_delta(yesterday)
+    _log.info("ingest.daily_delta.finished", extra={"update_date": yesterday})
