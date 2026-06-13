@@ -193,17 +193,29 @@ def _label_base(el: Any) -> str:
 
 
 def _assign_labels(children: list[Any]) -> list[str]:
-    """兄弟ノードの ltree ラベルを一意に割り当てる（重複ベースは出現順サフィックス）。"""
+    """兄弟ノードの ltree ラベルを一意に割り当てる。
+
+    重複する base には出現順サフィックスを付けるが、**実在の枝番ラベルと衝突しない**
+    ものを採用する。例: ``Num="23"`` が 3 つあり別に ``Num="23_2"`` がある場合、
+    採番の ``_23_2`` が ``Num="23_2"`` の自然ラベルと衝突しないようスキップする。
+    """
     bases = [_label_base(c) for c in children]
     counts = Counter(bases)
+    # 一意な base は確定ラベルとして予約し、重複側はこれらを避けて採番する
+    taken: set[str] = {base for base in bases if counts[base] == 1}
     seen: dict[str, int] = defaultdict(int)
     labels: list[str] = []
     for base in bases:
-        if counts[base] > 1:
-            seen[base] += 1
-            labels.append(f"{base}_{seen[base]}")
-        else:
+        if counts[base] == 1:
             labels.append(base)
+            continue
+        while True:
+            seen[base] += 1
+            candidate = f"{base}_{seen[base]}"
+            if candidate not in taken:
+                taken.add(candidate)
+                labels.append(candidate)
+                break
     return labels
 
 

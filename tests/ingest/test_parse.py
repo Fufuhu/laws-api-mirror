@@ -96,6 +96,35 @@ def test_num_branches_and_label() -> None:
     assert article.path == "MainProvision.Article_21_2"
 
 
+def test_disambiguation_avoids_collision_with_branch_label() -> None:
+    """採番サフィックスが実在の枝番ラベルと衝突しないことを確認する（全件実走で発見）。
+
+    Num="23" が 3 つ＋ Num="23_2" が 1 つ → 自然ラベル AppdxFormat_23_2 と採番が衝突しない。
+    """
+    xml = """<?xml version="1.0"?>
+<Law Era="Heisei" Year="12" Num="82" LawType="MinisterialOrdinance">
+  <LawNum>平成十二年厚生省令第八十二号</LawNum>
+  <LawBody>
+    <LawTitle>テスト省令</LawTitle>
+    <AppdxFormat Num="23"><AppdxFormatTitle>a</AppdxFormatTitle></AppdxFormat>
+    <AppdxFormat Num="23"><AppdxFormatTitle>b</AppdxFormatTitle></AppdxFormat>
+    <AppdxFormat Num="23"><AppdxFormatTitle>c</AppdxFormatTitle></AppdxFormat>
+    <AppdxFormat Num="23_2"><AppdxFormatTitle>d</AppdxFormatTitle></AppdxFormat>
+  </LawBody>
+</Law>
+""".encode()
+    law = parse_law(xml)
+    roots = [n for n in law.nodes if n.depth == 0]
+    paths = [n.path for n in roots]
+    assert len(paths) == len(set(paths))  # 4 つの AppdxFormat が一意
+    # Num="23_2" の自然ラベルは保持される
+    assert "AppdxFormat_23_2" in paths
+    # Num="23"×3 はいずれも AppdxFormat_23_2 を使わない
+    num23 = [n for n in roots if n.num_text == "23"]
+    assert len(num23) == 3
+    assert all(n.path != "AppdxFormat_23_2" for n in num23)
+
+
 def test_duplicate_siblings_disambiguated() -> None:
     """Num を持たない同種兄弟（SupplProvision×2）が一意なラベルになることを確認する。"""
     law = parse_law(SYNTHETIC)

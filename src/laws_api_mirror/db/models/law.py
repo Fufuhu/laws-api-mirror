@@ -44,7 +44,8 @@ class Law(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("law_num", name="uq_law_law_num"),
+        # law_num は一意ではない（異なる law_id が同一 law_num を持つ実データがある、§4.2）。
+        Index("ix_law_law_num", "law_num"),
         Index(
             "ix_law_num_components",
             "law_num_era",
