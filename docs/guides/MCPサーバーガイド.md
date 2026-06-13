@@ -19,19 +19,23 @@ Claude 等 ──(MCP: Streamable HTTP)──▶ laws-mcp (127.0.0.1:8765/mcp)
 
 | ツール | 用途 | 叩く API |
 |---|---|---|
-| `keyword_search(keyword, limit=20)` | 検索式で全文検索し、該当条文の抜粋を返す | `/api/2/keyword` |
-| `search_laws(title=None, law_type=None, limit=20)` | 題名・種別で法令を探す | `/api/2/laws` |
-| `list_law_revisions(law_id)` | 法令の改正履歴一覧 | `/api/2/law_revisions/{id}` |
-| `get_law_text(law_id, elm=None)` | 法令本文（`elm` で特定条文だけ）を light JSON で取得 | `/api/2/law_data/{id}` |
+| `keyword_search(keyword, limit=20, law_type=None, category_cd=None, asof=None, current=False)` | 検索式で全文検索し、該当条文の抜粋を返す（関連度順・ファセット絞り込み） | `/api/2/keyword` |
+| `search_laws(title=None, law_type=None, limit=20, category_cd=None, asof=None, current=False)` | 題名・種別・分類・時点で法令を探す | `/api/2/laws` |
+| `list_law_revisions(law_id)` | 法令の改正履歴一覧（現行最新フラグ・状態・改正法令ID つき） | `/api/2/law_revisions/{id}` |
+| `get_law_text(law_id, elm=None, asof=None)` | 法令本文（`elm` で特定条文・`asof` で時点指定）を light JSON で取得 | `/api/2/law_data/{id}` |
 
 典型フロー: `keyword_search`/`search_laws` で `law_id` を見つけ → `get_law_text(law_id, elm="MainProvision-Article_9")` で条文を読む。法令が見つからない場合は例外ではなく `{"error": ...}` を返す。
 
-### `keyword_search(keyword, limit=20)`
+時点指定（`asof`）と `current=True` を使うと、過去・将来・現行の各版の条文を読み分けられる（A-2 の施行期間に基づく）。`list_law_revisions` の `is_current_latest` で現行版の `law_revision_id` を確認してから `get_law_text` に渡してもよい。
+
+### `keyword_search(keyword, limit=20, law_type=None, category_cd=None, asof=None, current=False)`
 
 日本の法令を全文検索する。
 
 - `keyword`: 検索式。AND / OR / NOT・括弧・ワイルドカード（`*` `?`）に対応（§7.1）。
-- `limit`: 返す法令件数（既定 20）。
+- `limit`: 返す法令件数（既定 20）。結果は**ヒット文数の多い順（関連度順）**。
+- `law_type` / `category_cd`: 法令種別・事項別分類コード（`"1".."50"`）で絞り込む。
+- `asof`（YYYY-MM-DD）: その日に施行されていた版に限定する。`current=True` は現在施行中の版のみ。
 - 返り値（**本文全体ではなく抜粋**を返してトークンを節約）:
 
 ```json
@@ -51,7 +55,7 @@ Claude 等 ──(MCP: Streamable HTTP)──▶ laws-mcp (127.0.0.1:8765/mcp)
 }
 ```
 
-`position` は `law_node.path_text`。条文本文の詳細が必要なときは `law_id` を使って別途取得する（将来 `get_law_text` ツールを追加予定）。
+`position` は `law_node.path_text`。条文本文の詳細が必要なときは `law_id` と `position`（＝`elm`）を `get_law_text` に渡して取得する。
 
 ## 起動手順
 

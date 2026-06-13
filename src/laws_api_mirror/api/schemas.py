@@ -49,6 +49,8 @@ class RevisionInfo(BaseModel):
     remain_in_force: bool | None = None
     mission: str | None = None
     current_revision_status: str | None = None
+    #: ミラー拡張: 施行期間が本日を含む（＝現行最新の）版か（§4.3 / A-2）
+    is_current_latest: bool | None = None
 
 
 class LawListItem(BaseModel):

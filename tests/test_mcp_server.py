@@ -138,6 +138,95 @@ async def test_revisions_via_api_not_found() -> None:
     assert result["error"] and result["law_id"] == "NONE"
 
 
+async def test_search_via_api_passes_facets() -> None:
+    """keyword 検索にファセット（law_type/category_cd/asof/current）を渡す。"""
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json=_KEYWORD_RESPONSE)
+
+    async with _client(handler) as client:
+        await search_via_api(
+            "勅令",
+            20,
+            law_type="CabinetOrder",
+            category_cd="1",
+            asof="1948-01-01",
+            current=True,
+            client=client,
+        )
+
+    url = captured["url"]
+    assert "law_type=CabinetOrder" in url
+    assert "category_cd=1" in url
+    assert "asof=1948-01-01" in url
+    assert "current=true" in url
+
+
+async def test_laws_via_api_current_uses_today_asof() -> None:
+    """search_laws の current=True は asof=本日として送られる。"""
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"total_count": 0, "next_offset": None, "laws": []})
+
+    async with _client(handler) as client:
+        await laws_via_api(title=None, law_type=None, limit=20, current=True, client=client)
+
+    assert "asof=" in captured["url"]
+
+
+async def test_revisions_via_api_includes_current_flag() -> None:
+    """list_law_revisions の要約に現行判定・状態・改正法令IDを含める。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "law_info": {"law_id": "X"},
+                "revisions": [
+                    {
+                        "law_revision_id": "X_r1",
+                        "law_title": "法A",
+                        "amendment_enforcement_date": "2026-04-01",
+                        "is_current_latest": True,
+                        "current_revision_status": None,
+                        "amendment_law_id": "504AC0000000048",
+                    }
+                ],
+            },
+        )
+
+    async with _client(handler) as client:
+        result = await revisions_via_api("X", client=client)
+    rev = result["revisions"][0]
+    assert rev["is_current_latest"] is True
+    assert rev["amendment_law_id"] == "504AC0000000048"
+
+
+async def test_law_text_via_api_with_asof() -> None:
+    """get_law_text に asof を渡すと URL に乗る。"""
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "law_info": {"law_id": "X"},
+                "revision_info": {"law_revision_id": "X_r1", "law_title": "法A"},
+                "law_full_text": {},
+            },
+        )
+
+    async with _client(handler) as client:
+        await law_text_via_api("X", None, asof="2020-01-01", client=client)
+
+    assert "asof=2020-01-01" in captured["url"]
+
+
 async def test_law_text_via_api_with_elm() -> None:
     """get_law_text: elm を渡し、light 本文を content に入れて返す。"""
     captured: dict[str, str] = {}

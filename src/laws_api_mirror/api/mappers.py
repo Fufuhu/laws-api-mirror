@@ -39,4 +39,5 @@ def build_revision_info(revision: LawRevision) -> RevisionInfo:
         remain_in_force=revision.remain_in_force,
         mission=revision.mission,
         current_revision_status=revision.current_revision_status,
+        is_current_latest=revision.is_current_latest,
     )
