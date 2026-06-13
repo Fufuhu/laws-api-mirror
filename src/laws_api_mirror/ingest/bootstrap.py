@@ -19,13 +19,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from laws_api_mirror.db.models import IngestLawEvent, IngestRun
 from laws_api_mirror.db.session import SessionFactory
-from laws_api_mirror.ingest.archive import iter_law_xml
+from laws_api_mirror.ingest.archive import iter_law_xml, read_csv_meta
 from laws_api_mirror.ingest.load import load_parsed_law
 from laws_api_mirror.ingest.parse import parse_law
 from laws_api_mirror.ingest.search import populate_text_search
@@ -67,6 +68,48 @@ async def _rebuild_indexes(session: AsyncSession, defs: dict[str, str]) -> None:
         await session.execute(text(ddl))
 
 
+async def populate_enforcement_periods(
+    session: AsyncSession, law_ids: list[str] | None = None
+) -> None:
+    """法令ごとに enforcement_period と is_current_latest を計算する（§4.3 / §A-2）。
+
+    各リビジョンの施行期間 = [当該施行日, 次の施行日)（最新は上限なし）。
+    is_current_latest = 施行期間が本日を含むリビジョン。``law_ids`` 指定でその法令だけ更新。
+    """
+    where = "WHERE amendment_enforcement_date IS NOT NULL"
+    params: dict[str, Any] = {}
+    if law_ids is not None:
+        where += " AND law_id = ANY(:law_ids)"
+        params["law_ids"] = law_ids
+
+    # 更新順で一瞬区間が重なっても EXCLUDE で失敗しないよう、本 Tx 内で遅延検査にする
+    await session.execute(text("SET CONSTRAINTS enforcement_period_no_overlap DEFERRED"))
+    await session.execute(
+        text(
+            f"""
+            WITH ordered AS (
+                SELECT law_revision_id, amendment_enforcement_date,
+                    lead(amendment_enforcement_date) OVER (
+                        PARTITION BY law_id
+                        ORDER BY amendment_enforcement_date, law_revision_id
+                    ) AS next_date
+                FROM law_revision
+                {where}
+            )
+            UPDATE law_revision lr SET
+                enforcement_period = daterange(o.amendment_enforcement_date, o.next_date, '[)'),
+                is_current_latest = (
+                    o.amendment_enforcement_date <= CURRENT_DATE
+                    AND (o.next_date IS NULL OR o.next_date > CURRENT_DATE)
+                )
+            FROM ordered o
+            WHERE lr.law_revision_id = o.law_revision_id
+            """
+        ),
+        params,
+    )
+
+
 async def bootstrap_from_zip(
     zip_path: Path,
     *,
@@ -77,6 +120,7 @@ async def bootstrap_from_zip(
 ) -> BootstrapSummary:
     """一括 Zip の全法令を DB に投入する。``kind`` は ingest_run の種別（full / delta）。"""
     entries = list(iter_law_xml(zip_path))
+    csv_meta = read_csv_meta(zip_path)
     total = len(entries)
 
     async with session_factory() as session, session.begin():
@@ -104,9 +148,9 @@ async def bootstrap_from_zip(
                     session,
                     parsed,
                     law_revision_id=entry.law_revision_id,
-                    is_current_latest=None,
                     raw_xml=entry.xml,
                     use_copy=use_copy,
+                    meta=csv_meta.get(entry.law_revision_id),
                 )
                 # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
                 searched = await populate_text_search(
@@ -140,6 +184,12 @@ async def bootstrap_from_zip(
     if drop_indexes and saved_defs:
         async with session_factory() as session, session.begin():
             await _rebuild_indexes(session, saved_defs)
+
+    # 投入した法令の施行期間 / current 判定を計算（§4.3 / §A-2）
+    affected_law_ids = sorted({entry.law_id for entry in entries})
+    if affected_law_ids:
+        async with session_factory() as session, session.begin():
+            await populate_enforcement_periods(session, affected_law_ids)
 
     async with session_factory() as session, session.begin():
         run = await session.get(IngestRun, run_id)  # type: ignore[assignment]

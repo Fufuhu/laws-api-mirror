@@ -50,13 +50,15 @@ async def test_laws_filter_and_order(client: AsyncClient, ingested: str) -> None
     # 範囲外は除外
     miss = await client.get("/api/2/laws", params={"promulgation_date_from": "2000-01-01"})
     assert all(it["law_info"]["law_id"] != "322CO0000000014" for it in miss.json()["laws"])
-    # order（公布日降順）と asof（施行期間 null のため 0 件）も 200 で受理
+    # order（公布日降順）は 200 で受理
     assert (
         await client.get("/api/2/laws", params={"order": "-law_info.promulgation_date"})
     ).status_code == 200
-    assert (await client.get("/api/2/laws", params={"asof": "1948-01-01"})).json()[
-        "total_count"
-    ] == 0
+    # asof: 施行(1947-05-03)以降の時点は含み、それ以前は除外（A-2 で enforcement_period を計算）
+    after = await client.get("/api/2/laws", params={"asof": "1948-01-01"})
+    assert any(it["law_info"]["law_id"] == "322CO0000000014" for it in after.json()["laws"])
+    before = await client.get("/api/2/laws", params={"asof": "1900-01-01"})
+    assert all(it["law_info"]["law_id"] != "322CO0000000014" for it in before.json()["laws"])
 
 
 async def test_response_format_xml(client: AsyncClient, ingested: str) -> None:

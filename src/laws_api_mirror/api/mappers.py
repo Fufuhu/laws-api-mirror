@@ -26,4 +26,17 @@ def build_revision_info(revision: LawRevision) -> RevisionInfo:
         law_title=revision.law_title,
         law_title_kana=revision.law_title_kana,
         abbrev=revision.abbrev,
+        # A-1 索引 CSV / A-2 施行期間で充足した項目
+        category=revision.category_cd,
+        updated=revision.updated_at_source,
+        amendment_enforcement_date=revision.amendment_enforcement_date,
+        amendment_enforcement_comment=revision.amendment_enforcement_comment,
+        amendment_scheduled_enforcement_date=revision.amendment_scheduled_enforcement_date,
+        amendment_law_id=revision.amendment_law_id,
+        amendment_type=revision.amendment_type,
+        repeal_status=revision.repeal_status,
+        repeal_date=revision.repeal_date,
+        remain_in_force=revision.remain_in_force,
+        mission=revision.mission,
+        current_revision_status=revision.current_revision_status,
     )

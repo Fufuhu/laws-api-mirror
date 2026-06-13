@@ -19,14 +19,33 @@ import gzip
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from laws_api_mirror.db.models import Law, LawNode, LawRevision, LawXml
+from laws_api_mirror.db.models import AmendmentLaw, Law, LawNode, LawRevision, LawXml
+from laws_api_mirror.ingest.archive import RevisionMeta
 from laws_api_mirror.ingest.parse import ParsedLaw, ParsedNode
+
+#: 改正法令 id の「改正なし」を表す全ゼロ値
+_NO_AMENDMENT = "000000000000000"
+
+
+def _derive_from_revision_id(law_revision_id: str) -> tuple[date | None, str | None]:
+    """``{law_id}_{施行日}_{改正法令id}`` から施行日と改正法令 id を取り出す。"""
+    parts = law_revision_id.rsplit("_", 2)
+    if len(parts) != 3:
+        return None, None
+    enforcement, amendment_id = parts[1], parts[2]
+    try:
+        enforcement_date: date | None = datetime.strptime(enforcement, "%Y%m%d").date()
+    except ValueError:
+        enforcement_date = None
+    amendment_law_id = amendment_id if amendment_id != _NO_AMENDMENT else None
+    return enforcement_date, amendment_law_id
 
 
 @dataclass
@@ -94,23 +113,52 @@ async def load_parsed_law(
     parsed: ParsedLaw,
     *,
     law_revision_id: str,
-    is_current_latest: bool | None = True,
     raw_xml: bytes | None = None,
     use_copy: bool = True,
+    meta: RevisionMeta | None = None,
 ) -> LoadResult:
     """1 法令を DB に投入する。呼び出し側がトランザクション境界を管理する。
 
     ``raw_xml`` を渡すと原文 XML を ``law_xml`` に gzip 保存する（/law_data の再提供用、§4.6）。
+    ``meta``（索引 CSV 由来）で category / 改正法令メタ等を充足する。施行日・改正法令 id は
+    ``law_revision_id`` から導出する。``enforcement_period`` / ``is_current_latest`` は取り込み後の
+    別パス（bootstrap）で計算する。
     """
     if parsed.law_id is None:
         raise ValueError("law_id が必要です（Zip のフォルダ名等から与える）")
 
+    enforcement_date, amendment_law_id = _derive_from_revision_id(law_revision_id)
+
     await _upsert_law(session, parsed)
-    await _upsert_law_revision(session, parsed, law_revision_id, is_current_latest)
+    if amendment_law_id is not None:
+        await _upsert_amendment_law(session, amendment_law_id, meta)
+    await _upsert_law_revision(
+        session, parsed, law_revision_id, enforcement_date, amendment_law_id, meta
+    )
     if raw_xml is not None:
         await _upsert_law_xml(session, law_revision_id, raw_xml)
     count = await _replace_nodes(session, parsed, law_revision_id, use_copy=use_copy)
     return LoadResult(parsed.law_id, law_revision_id, count)
+
+
+async def _upsert_amendment_law(
+    session: AsyncSession, amendment_law_id: str, meta: RevisionMeta | None
+) -> None:
+    """改正法令メタを amendment_law に UPSERT する（§4.5。law への厳格 FK は持たない）。"""
+    stmt = pg_insert(AmendmentLaw).values(
+        amendment_law_id=amendment_law_id,
+        amendment_law_title=meta.amendment_law_title if meta else None,
+        amendment_law_num=meta.amendment_law_num if meta else None,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[AmendmentLaw.amendment_law_id],
+        set_={
+            "amendment_law_title": stmt.excluded.amendment_law_title,
+            "amendment_law_num": stmt.excluded.amendment_law_num,
+            "last_seen_at": func.now(),
+        },
+    )
+    await session.execute(stmt)
 
 
 async def _upsert_law_xml(session: AsyncSession, law_revision_id: str, raw_xml: bytes) -> None:
@@ -162,27 +210,31 @@ async def _upsert_law_revision(
     session: AsyncSession,
     parsed: ParsedLaw,
     law_revision_id: str,
-    is_current_latest: bool | None,
+    enforcement_date: date | None,
+    amendment_law_id: str | None,
+    meta: RevisionMeta | None,
 ) -> None:
-    stmt = pg_insert(LawRevision).values(
-        law_revision_id=law_revision_id,
-        law_id=parsed.law_id,
-        law_type=parsed.law_type,
-        law_title=parsed.law_title or parsed.law_num or law_revision_id,
-        law_title_kana=parsed.law_title_kana,
-        abbrev=parsed.abbrev,
-        is_current_latest=is_current_latest,
-    )
+    original = amendment_law_id is None  # 改正法令 id が無い＝新規制定
+    values = {
+        "law_revision_id": law_revision_id,
+        "law_id": parsed.law_id,
+        "law_type": parsed.law_type,
+        "law_title": parsed.law_title or parsed.law_num or law_revision_id,
+        "law_title_kana": parsed.law_title_kana,
+        "abbrev": parsed.abbrev,
+        "category_cd": meta.category_cd if meta else None,
+        "amendment_enforcement_date": enforcement_date,
+        "amendment_enforcement_comment": meta.amendment_enforcement_comment if meta else None,
+        "amendment_law_id": amendment_law_id,
+        "amendment_type": "1" if original else "3",  # 1 新規 / 3 被改正（§4.1）
+        "mission": "New" if original else "Partial",
+        "current_revision_status": "UnEnforced" if (meta and meta.un_enforced) else None,
+        # is_current_latest / enforcement_period は取り込み後の別パスで設定
+    }
+    stmt = pg_insert(LawRevision).values(**values)
     stmt = stmt.on_conflict_do_update(
         index_elements=[LawRevision.law_revision_id],
-        set_={
-            "law_id": stmt.excluded.law_id,
-            "law_type": stmt.excluded.law_type,
-            "law_title": stmt.excluded.law_title,
-            "law_title_kana": stmt.excluded.law_title_kana,
-            "abbrev": stmt.excluded.abbrev,
-            "is_current_latest": stmt.excluded.is_current_latest,
-        },
+        set_={key: stmt.excluded[key] for key in values if key != "law_revision_id"},
     )
     await session.execute(stmt)
 
