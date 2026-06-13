@@ -14,13 +14,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.pagination import compute_next_offset
 from laws_api_mirror.api.schemas import LawListItem, LawsResponse
+from laws_api_mirror.api.xml import negotiate
 from laws_api_mirror.db.models import Law, LawRevision
 from laws_api_mirror.db.session import get_session
 
@@ -137,10 +138,11 @@ async def get_laws(
     order: str | None = Query(
         None, description="並び替え（例 -law_info.promulgation_date,law_info.law_id）"
     ),
+    response_format: str = Query("json", pattern="^(json|xml)$"),
     limit: int = Query(100, ge=1, le=1000, description="取得件数"),
     offset: int = Query(0, ge=0, description="開始位置"),
     session: AsyncSession = Depends(get_session),
-) -> LawsResponse:
+) -> LawsResponse | Response:
     total, rows = await list_laws(
         session,
         law_id=law_id,
@@ -165,9 +167,10 @@ async def get_laws(
         )
         for law, revision in rows
     ]
-    return LawsResponse(
+    model = LawsResponse(
         total_count=total,
         count=len(items),
         next_offset=compute_next_offset(total, offset, limit, len(items)),
         laws=items,
     )
+    return negotiate(response_format, "laws_response", model)

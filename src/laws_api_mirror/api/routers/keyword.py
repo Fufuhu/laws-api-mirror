@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.pagination import compute_next_offset
 from laws_api_mirror.api.query import compile_condition, highlight_terms, parse_query
 from laws_api_mirror.api.schemas import KeywordItem, KeywordResponse, KeywordSentence
+from laws_api_mirror.api.xml import negotiate
 from laws_api_mirror.db.models import Law, LawNode, LawRevision
 from laws_api_mirror.db.session import get_session
 
@@ -41,11 +42,13 @@ async def keyword_search(
     offset: int = Query(0, ge=0),
     sentences_limit: int | None = Query(None, ge=1, description="法令あたりの文数上限"),
     highlight_tag: str = Query("span", description="ハイライトに使うタグ名"),
+    response_format: str = Query("json", pattern="^(json|xml)$"),
     session: AsyncSession = Depends(get_session),
-) -> KeywordResponse:
+) -> KeywordResponse | Response:
     node = parse_query(keyword)
     if node is None:
-        return KeywordResponse(total_count=0, sentence_count=0, next_offset=None, items=[])
+        empty = KeywordResponse(total_count=0, sentence_count=0, next_offset=None, items=[])
+        return negotiate(response_format, "keyword_response", empty)
 
     terms = highlight_terms(node)
     match = and_(
@@ -116,9 +119,10 @@ async def keyword_search(
                 )
             )
 
-    return KeywordResponse(
+    model = KeywordResponse(
         total_count=total_count,
         sentence_count=sentence_count,
         next_offset=compute_next_offset(total_count, offset, limit, len(items)),
         items=items,
     )
+    return negotiate(response_format, "keyword_response", model)

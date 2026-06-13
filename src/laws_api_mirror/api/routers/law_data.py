@@ -10,7 +10,7 @@ import gzip
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from lxml import etree
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from laws_api_mirror.api.rendering import (
 )
 from laws_api_mirror.api.repository import resolve_law
 from laws_api_mirror.api.schemas import LawDataResponse
+from laws_api_mirror.api.xml import negotiate
 from laws_api_mirror.db.models import LawXml
 from laws_api_mirror.db.session import get_session
 
@@ -45,10 +46,7 @@ async def get_law_data(
         None, description="時点（YYYY-MM-DD）。施行期間が当該日を含む版を返す"
     ),
     session: AsyncSession = Depends(get_session),
-) -> LawDataResponse:
-    if response_format == "xml":
-        raise HTTPException(status_code=400, detail="response_format=xml は未対応です")
-
+) -> LawDataResponse | Response:
     resolved = await resolve_law(session, law_id_or_num_or_revision_id, asof=asof)
     if resolved is None:
         raise HTTPException(status_code=404, detail="法令が見つかりません")
@@ -73,8 +71,9 @@ async def get_law_data(
     else:
         law_full_text = element_to_full(target)
 
-    return LawDataResponse(
+    model = LawDataResponse(
         law_info=build_law_info(law),
         revision_info=build_revision_info(revision),
         law_full_text=law_full_text,
     )
+    return negotiate(response_format, "law_data_response", model)

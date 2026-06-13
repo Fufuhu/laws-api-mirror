@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.schemas import LawRevisionsResponse
+from laws_api_mirror.api.xml import negotiate
 from laws_api_mirror.db.models import Law, LawRevision
 from laws_api_mirror.db.session import get_session
 
@@ -24,8 +25,9 @@ router = APIRouter(prefix="/api/2", tags=["law_revisions"])
 )
 async def get_law_revisions(
     law_id_or_num: str,
+    response_format: str = Query("json", pattern="^(json|xml)$"),
     session: AsyncSession = Depends(get_session),
-) -> LawRevisionsResponse:
+) -> LawRevisionsResponse | Response:
     law = await session.scalar(
         select(Law).where(or_(Law.law_id == law_id_or_num, Law.law_num == law_id_or_num))
     )
@@ -39,7 +41,8 @@ async def get_law_revisions(
             .order_by(LawRevision.law_revision_id)
         )
     )
-    return LawRevisionsResponse(
+    model = LawRevisionsResponse(
         law_info=build_law_info(law),
         revisions=[build_revision_info(r) for r in revisions],
     )
+    return negotiate(response_format, "law_revisions_response", model)

@@ -59,6 +59,31 @@ async def test_laws_filter_and_order(client: AsyncClient, ingested: str) -> None
     ] == 0
 
 
+async def test_response_format_xml(client: AsyncClient, ingested: str) -> None:
+    """response_format=xml で各エンドポイントが XML 封筒を返す。"""
+    laws = await client.get(
+        "/api/2/laws", params={"law_id": "322CO0000000014", "response_format": "xml"}
+    )
+    assert laws.headers["content-type"].startswith("application/xml")
+    assert laws.text.startswith("<laws_response>")
+    assert "<law_id>322CO0000000014</law_id>" in laws.text
+
+    rev = await client.get(
+        "/api/2/law_revisions/322CO0000000014", params={"response_format": "xml"}
+    )
+    assert rev.text.startswith("<law_revisions_response>")
+    assert "<revisions><revision>" in rev.text
+
+    kw = await client.get("/api/2/keyword", params={"keyword": "勅令", "response_format": "xml"})
+    assert kw.text.startswith("<keyword_response>")
+
+    data = await client.get(
+        f"/api/2/law_data/{ingested}",
+        params={"elm": "MainProvision-Paragraph_1", "response_format": "xml"},
+    )
+    assert data.text.startswith("<law_data_response>")
+
+
 async def test_law_revisions(client: AsyncClient, ingested: str) -> None:
     """/api/2/law_revisions で履歴が引ける。"""
     resp = await client.get("/api/2/law_revisions/322CO0000000014")
