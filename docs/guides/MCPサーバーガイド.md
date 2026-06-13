@@ -84,7 +84,7 @@ MCP サーバー定義、HTTP 型）:
 }
 ```
 
-接続後、`keyword_search` ツールが利用可能になる。
+接続後、`keyword_search` / `search_laws` / `list_law_revisions` / `get_law_text` の 4 ツールが利用可能になる。
 
 ## 設定（環境変数 / `.env`）
 
