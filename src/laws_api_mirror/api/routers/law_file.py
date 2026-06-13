@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from lxml import etree
@@ -40,6 +41,7 @@ async def get_law_file(
     law_id_or_num_or_revision_id: str,
     json_format: str = Query("full", pattern="^(full|light)$"),
     elm: str | None = Query(None, description="取得する要素（例 MainProvision-Article_9）"),
+    asof: date | None = Query(None, description="時点（YYYY-MM-DD）。施行期間が当該日を含む版"),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     if file_type in _UNSUPPORTED:
@@ -50,7 +52,7 @@ async def get_law_file(
     if file_type not in _SUPPORTED:
         raise HTTPException(status_code=400, detail=f"未知の file_type: {file_type}")
 
-    resolved = await resolve_law(session, law_id_or_num_or_revision_id)
+    resolved = await resolve_law(session, law_id_or_num_or_revision_id, asof=asof)
     if resolved is None:
         raise HTTPException(status_code=404, detail="法令が見つかりません")
     _, revision = resolved

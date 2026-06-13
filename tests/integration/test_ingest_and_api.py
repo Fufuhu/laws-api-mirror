@@ -38,6 +38,27 @@ async def test_laws(client: AsyncClient, ingested: str) -> None:
     assert info["promulgation_date"] == "1947-05-03"
 
 
+async def test_laws_filter_and_order(client: AsyncClient, ingested: str) -> None:
+    """/laws の公布日フィルタ・order・asof パラメータが受理され機能する。"""
+    # 公布日範囲（フィクスチャは 1947-05-03）に含む
+    hit = await client.get(
+        "/api/2/laws",
+        params={"promulgation_date_from": "1947-01-01", "promulgation_date_to": "1947-12-31"},
+    )
+    assert hit.status_code == 200
+    assert any(it["law_info"]["law_id"] == "322CO0000000014" for it in hit.json()["laws"])
+    # 範囲外は除外
+    miss = await client.get("/api/2/laws", params={"promulgation_date_from": "2000-01-01"})
+    assert all(it["law_info"]["law_id"] != "322CO0000000014" for it in miss.json()["laws"])
+    # order（公布日降順）と asof（施行期間 null のため 0 件）も 200 で受理
+    assert (
+        await client.get("/api/2/laws", params={"order": "-law_info.promulgation_date"})
+    ).status_code == 200
+    assert (await client.get("/api/2/laws", params={"asof": "1948-01-01"})).json()[
+        "total_count"
+    ] == 0
+
+
 async def test_law_revisions(client: AsyncClient, ingested: str) -> None:
     """/api/2/law_revisions で履歴が引ける。"""
     resp = await client.get("/api/2/law_revisions/322CO0000000014")

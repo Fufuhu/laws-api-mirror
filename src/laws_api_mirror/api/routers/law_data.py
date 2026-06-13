@@ -7,6 +7,7 @@ JSON ツリー / Base64 XML で返す。id は law_revision_id / law_id / law_nu
 from __future__ import annotations
 
 import gzip
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -40,12 +41,15 @@ async def get_law_data(
     json_format: str = Query("full", pattern="^(full|light)$"),
     response_format: str = Query("json", pattern="^(json|xml)$"),
     elm: str | None = Query(None, description="取得する要素（例 MainProvision-Article_9）"),
+    asof: date | None = Query(
+        None, description="時点（YYYY-MM-DD）。施行期間が当該日を含む版を返す"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> LawDataResponse:
     if response_format == "xml":
         raise HTTPException(status_code=400, detail="response_format=xml は未対応です")
 
-    resolved = await resolve_law(session, law_id_or_num_or_revision_id)
+    resolved = await resolve_law(session, law_id_or_num_or_revision_id, asof=asof)
     if resolved is None:
         raise HTTPException(status_code=404, detail="法令が見つかりません")
     law, revision = resolved
