@@ -23,6 +23,7 @@ uv run alembic upgrade head       # スキーマ適用 / alembic revision --auto
 docker compose up -d --build      # postgres + migrate + worker
 uv run uvicorn laws_api_mirror.api.app:app --reload   # API サーバー
 uv run laws-ingest <download|bootstrap|worker|enqueue-delta>   # 取り込み CLI
+uv run laws-mcp                   # 法令検索 MCP サーバー（要 FastAPI 稼働）
 ```
 
 **変更は ruff / ruff format / mypy / pytest をすべて通すこと。** DB が絡む変更は compose もしくは testcontainers で実 DB 検証する（SQLite では `ltree`/`pg_bigm`/`EXCLUDE` 等が使えない）。
@@ -44,7 +45,8 @@ uv run laws-ingest <download|bootstrap|worker|enqueue-delta>   # 取り込み CL
   - `rendering`: 原文 XML を源泉に `{tag,attr,children}`(full)/light/Base64 XML を再構築。`elm` はパスラベル規則で XML を辿る。
   - `query`: 検索式（AND/OR/NOT・括弧・ワイルドカード）→ pg_bigm の LIKE ブール条件にコンパイル。
   - `schemas` / `mappers` / `pagination` / `repository`: レスポンス整形・id 解決。
-- `db/`: `session`（async エンジン・`get_session`・テスト用 `configure`）、`models`（§4 の全テーブル）、`types`（`LTREE`）。
+- `db/`: `session`（async エンジン・`get_session`・テスト用 `configure`、COPY 用 ltree コーデック登録）、`models`（§4 の全テーブル）、`types`（`LTREE`）。
+- `mcp_server`: 法令検索の MCP サーバー（Streamable HTTP）。FastAPI の `/api/2/keyword` を HTTP 経由で呼ぶ薄いプロキシ（`docs/guides/MCPサーバーガイド.md`）。
 - `migrations/`: 初期スキーマ（拡張・EXCLUDE・GIN/GiST・マスタ投入）と procrastinate スキーマ（専用スキーマに隔離）。
 
 ## 取り込み・同期戦略

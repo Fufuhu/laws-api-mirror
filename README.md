@@ -18,6 +18,7 @@ download  →  bootstrap / 日次差分ワーカー  →  v2 互換 API
 - **取り込み**: e-Gov 一括ダウンロード Zip を取得し、法令標準 XML を `law_node`（隣接リスト + ltree）に正規化。原文 XML も `law_xml` に保持。
 - **検索**: pg_bigm（部分一致）＋ tsvector（fugashi 形態素）のハイブリッド。`/keyword` は AND/OR/NOT・括弧・ワイルドカードの検索式に対応。
 - **再提供**: e-Gov v2 互換の 5 エンドポイント（下表）。
+- **MCP**: AI アシスタント（Claude 等）から法令を全文検索できる MCP サーバー（Streamable HTTP）。[`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
 - **運用**: Procrastinate（PostgreSQL バックエンド、Redis 不使用）で日次差分を自動取り込み。
 - **品質**: CI（GitHub Actions）で ruff / mypy(strict) / pytest、testcontainers による実 DB 統合テスト。
 
@@ -64,6 +65,14 @@ open http://127.0.0.1:8000/docs   # OpenAPI
 
 詳細は [`docs/guides/ダウンロード実行ガイド.md`](./docs/guides/ダウンロード実行ガイド.md) を参照。
 
+### 4. （任意）MCP サーバーで AI から検索
+
+```sh
+uv run laws-mcp   # http://127.0.0.1:8765/mcp（Streamable HTTP）
+```
+
+MCP クライアントから `/mcp` に接続し `keyword_search` ツールを使う。詳細は [`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
+
 ## CLI（`laws-ingest`）
 
 | コマンド | 用途 |
@@ -99,6 +108,7 @@ src/laws_api_mirror/
               / 全件投入(bootstrap) / 検索索引(search) / ジョブ(jobs) / CLI
   db/         接続(session) / ORM モデル(models) / 型(types)
   core/       設定(config)
+  mcp_server  法令検索の MCP サーバー（Streamable HTTP）
 migrations/   Alembic（初期スキーマ + procrastinate スキーマ）
 docker/       postgres（pg_bigm 同梱）/ app（worker 実行イメージ）
 docs/         design（設計書）/ guides / tests
