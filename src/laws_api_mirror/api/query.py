@@ -181,3 +181,68 @@ def highlight_terms(node: Node, *, negated: bool = False) -> list[str]:
         *highlight_terms(node.left, negated=negated),
         *highlight_terms(node.right, negated=negated),
     ]
+
+
+def _match_spans(value: str, terms: list[str]) -> list[tuple[int, int]]:
+    """``terms`` の全出現区間を収集し、重なりをマージして返す（昇順・非重複）。"""
+    spans: list[tuple[int, int]] = []
+    for term in terms:
+        if not term:
+            continue
+        start = 0
+        while (idx := value.find(term, start)) != -1:
+            spans.append((idx, idx + len(term)))
+            start = idx + len(term)
+    if not spans:
+        return []
+    spans.sort()
+    merged: list[tuple[int, int]] = [spans[0]]
+    for s, e in spans[1:]:
+        last_s, last_e = merged[-1]
+        if s <= last_e:  # 重なる/隣接 → 連結
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def highlight_text(value: str, terms: list[str], tag: str) -> str:
+    """ヒット箇所（肯定リテラル）をタグで囲む（区間マージで二重ラップを防ぐ）。
+
+    部分一致する語が重なっても（例 ``勅`` と ``勅令``）入れ子のタグにならない。
+    """
+    spans = _match_spans(value, terms)
+    if not spans:
+        return value
+    open_tag, close_tag = f"<{tag}>", f"</{tag}>"
+    out: list[str] = []
+    prev = 0
+    for s, e in spans:
+        out.append(value[prev:s])
+        out.append(open_tag)
+        out.append(value[s:e])
+        out.append(close_tag)
+        prev = e
+    out.append(value[prev:])
+    return "".join(out)
+
+
+def snippet_around(value: str, terms: list[str], length: int, *, ellipsis: str = "…") -> str:
+    """最初のヒットを中心に最大 ``length`` 文字の窓を切り出す（前後は ``…``）。
+
+    ``length`` 以下なら全文。ヒットが無ければ先頭から切り出す。タグ挿入前の
+    生テキストに対して適用すること（ハイライトは窓の確定後に行う）。
+    """
+    if length <= 0 or len(value) <= length:
+        return value
+    spans = _match_spans(value, terms)
+    first = spans[0][0] if spans else 0
+    half = length // 2
+    end = min(len(value), max(first + half, length))
+    start = max(0, end - length)
+    snippet = value[start:end]
+    if start > 0:
+        snippet = ellipsis + snippet
+    if end < len(value):
+        snippet = snippet + ellipsis
+    return snippet

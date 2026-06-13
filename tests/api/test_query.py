@@ -12,7 +12,9 @@ from laws_api_mirror.api.query import (
     _like_pattern,
     compile_condition,
     highlight_terms,
+    highlight_text,
     parse_query,
+    snippet_around,
 )
 from laws_api_mirror.db.models import LawNode
 
@@ -67,3 +69,32 @@ def test_highlight_terms_excludes_negated_and_wildcards() -> None:
     """NOT 配下は除外、ワイルドカードは除去して収集する。"""
     node = And(Term("国民*"), Not(Term("天皇")))
     assert highlight_terms(node) == ["国民"]
+
+
+def test_highlight_text_wraps_each_occurrence() -> None:
+    """全出現箇所をタグで囲む。"""
+    assert highlight_text("勅令と勅令", ["勅令"], "span") == "<span>勅令</span>と<span>勅令</span>"
+
+
+def test_highlight_text_no_nested_wrap_for_overlapping_terms() -> None:
+    """部分一致する語が重なっても入れ子のタグにならない（区間マージ）。"""
+    # "勅" は "勅令" の一部。長短どちらの順でも一重のタグで囲む。
+    assert highlight_text("勅令", ["勅", "勅令"], "span") == "<span>勅令</span>"
+
+
+def test_highlight_text_returns_value_when_no_hit() -> None:
+    assert highlight_text("政令", ["勅令"], "span") == "政令"
+
+
+def test_snippet_around_returns_full_when_short() -> None:
+    """``length`` 以下なら全文を返す。"""
+    assert snippet_around("短い文", ["文"], 100) == "短い文"
+
+
+def test_snippet_around_windows_first_hit() -> None:
+    """ヒットを中心に窓を切り出し前後に省略記号を付す。"""
+    value = "あ" * 50 + "勅令" + "い" * 50
+    out = snippet_around(value, ["勅令"], 10)
+    assert "勅令" in out
+    assert out.startswith("…") and out.endswith("…")
+    assert len(out) <= 10 + 2  # 窓 + 前後の省略記号

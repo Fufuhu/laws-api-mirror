@@ -170,3 +170,28 @@ async def test_keyword_wildcard(client: AsyncClient, ingested: str) -> None:
     """ワイルドカード: 勅* が勅令にヒットする。"""
     resp = await client.get("/api/2/keyword", params={"keyword": "勅*"})
     assert resp.json()["total_count"] >= 1
+
+
+async def test_keyword_facet_law_type(client: AsyncClient, ingested: str) -> None:
+    """ファセット（D-2）: 法令種別で絞り込める。"""
+    hit = await client.get("/api/2/keyword", params={"keyword": "勅令", "law_type": "CabinetOrder"})
+    assert hit.json()["total_count"] >= 1
+    miss = await client.get("/api/2/keyword", params={"keyword": "勅令", "law_type": "Act"})
+    assert miss.json()["total_count"] == 0
+
+
+async def test_keyword_facet_asof_and_current(client: AsyncClient, ingested: str) -> None:
+    """ファセット（D-2）: asof（施行時点）と current（現行最新）で絞り込める。"""
+    after = await client.get("/api/2/keyword", params={"keyword": "勅令", "asof": "1948-01-01"})
+    assert after.json()["total_count"] >= 1
+    before = await client.get("/api/2/keyword", params={"keyword": "勅令", "asof": "1900-01-01"})
+    assert before.json()["total_count"] == 0
+    cur = await client.get("/api/2/keyword", params={"keyword": "勅令", "current": "true"})
+    assert cur.json()["total_count"] >= 1
+
+
+async def test_keyword_snippet_length(client: AsyncClient, ingested: str) -> None:
+    """スニペット（D-3）: snippet_length 指定でヒット周辺の窓を返しつつハイライトする。"""
+    resp = await client.get("/api/2/keyword", params={"keyword": "勅令", "snippet_length": "12"})
+    text = resp.json()["items"][0]["sentences"][0]["text"]
+    assert "<span>勅令</span>" in text

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from laws_api_mirror.api.routers.keyword import highlight_text
+from laws_api_mirror.api.query import highlight_text
 
 
 def test_highlight_wraps_terms() -> None:

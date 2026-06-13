@@ -2,21 +2,34 @@
 
 検索式（AND / OR / NOT・括弧・ワイルドカード ``*`` ``?``・句）を解析し、pg_bigm が効く
 ``text_plain`` の LIKE ブール条件にコンパイルしてヒットした law_node を、法令
-（リビジョン）ごとにまとめて返す（§5 / §7.1）。tsvector（``text_search``）は別経路の
-索引として保持し、関連度ランキング等は後続に委ねる。
+（リビジョン）ごとにまとめて返す（§5 / §7.1）。
+
+- **ランキング（D-1）**: ヒット文数（マッチした law_node 数）の降順で法令を並べる。
+  辞書順より関連度の高い法令を上位に出す。tsvector の ``ts_rank`` 合成は後続に委ねる。
+- **ファセット絞り込み（D-2）**: ``law_type`` / ``category_cd`` / ``asof``（施行時点）/
+  ``current``（現行最新）でヒット法令を絞り込む。
+- **スニペット/ハイライト（D-3）**: ``snippet_length`` 指定でヒット周辺の窓を切り出し、
+  区間マージ方式のハイライトで二重ラップを防ぐ。
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import and_, distinct, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from laws_api_mirror.api.mappers import build_law_info, build_revision_info
 from laws_api_mirror.api.pagination import compute_next_offset
-from laws_api_mirror.api.query import compile_condition, highlight_terms, parse_query
+from laws_api_mirror.api.query import (
+    compile_condition,
+    highlight_terms,
+    highlight_text,
+    parse_query,
+    snippet_around,
+)
 from laws_api_mirror.api.schemas import KeywordItem, KeywordResponse, KeywordSentence
 from laws_api_mirror.api.xml import negotiate
 from laws_api_mirror.db.models import Law, LawNode, LawRevision
@@ -25,14 +38,10 @@ from laws_api_mirror.db.session import get_session
 router = APIRouter(prefix="/api/2", tags=["keyword"])
 
 
-def highlight_text(value: str, terms: list[str], tag: str) -> str:
-    """ヒット箇所（肯定リテラル）をハイライトタグで囲む。"""
-    open_tag, close_tag = f"<{tag}>", f"</{tag}>"
-    result = value
-    for term in terms:
-        if term and term in result:
-            result = result.replace(term, f"{open_tag}{term}{close_tag}")
-    return result
+def render_sentence(text_plain: str, terms: list[str], tag: str, snippet_length: int | None) -> str:
+    """ヒット文を（必要ならスニペット化して）ハイライトする。"""
+    body = snippet_around(text_plain, terms, snippet_length) if snippet_length else text_plain
+    return highlight_text(body, terms, tag)
 
 
 @router.get("/keyword", response_model=KeywordResponse, summary="キーワード検索")
@@ -42,6 +51,15 @@ async def keyword_search(
     offset: int = Query(0, ge=0),
     sentences_limit: int | None = Query(None, ge=1, description="法令あたりの文数上限"),
     highlight_tag: str = Query("span", description="ハイライトに使うタグ名"),
+    snippet_length: int | None = Query(
+        None, ge=1, description="ヒット周辺をこの文字数で切り出す（未指定はノード全文）"
+    ),
+    law_type: str | None = Query(None, description="法令種別で絞り込み（Constitution / Act 等）"),
+    category_cd: str | None = Query(None, description="事項別分類コードで絞り込み（1..50）"),
+    asof: date | None = Query(
+        None, description="時点（YYYY-MM-DD）。施行期間が当該日を含む版に限定"
+    ),
+    current: bool = Query(False, description="現行最新の版のみに限定"),
     response_format: str = Query("json", pattern="^(json|xml)$"),
     session: AsyncSession = Depends(get_session),
 ) -> KeywordResponse | Response:
@@ -56,20 +74,41 @@ async def keyword_search(
         compile_condition(node, LawNode.text_plain),
     )
 
-    sentence_count = (
-        await session.scalar(select(func.count()).select_from(LawNode).where(match)) or 0
+    # ファセット条件（D-2）。ヒット法令（リビジョン）側に対して効かせる。
+    rev_conds = []
+    if law_type:
+        rev_conds.append(LawRevision.law_type == law_type)
+    if category_cd:
+        rev_conds.append(LawRevision.category_cd == category_cd)
+    if asof:
+        rev_conds.append(LawRevision.enforcement_period.op("@>")(asof))
+    if current:
+        rev_conds.append(LawRevision.is_current_latest.is_(True))
+
+    # リビジョンごとのヒット文数（ランキング・件数の基礎）。
+    matched = (
+        select(LawNode.law_revision_id, func.count().label("match_count"))
+        .where(match)
+        .group_by(LawNode.law_revision_id)
+        .subquery()
     )
-    total_count = (
-        await session.scalar(select(func.count(distinct(LawNode.law_revision_id))).where(match))
-        or 0
+    qualified = select(matched.c.law_revision_id, matched.c.match_count).join(
+        LawRevision, LawRevision.law_revision_id == matched.c.law_revision_id
+    )
+    if rev_conds:
+        qualified = qualified.where(*rev_conds)
+    qual = qualified.subquery()
+
+    total_count = await session.scalar(select(func.count()).select_from(qual)) or 0
+    sentence_count = (
+        await session.scalar(select(func.coalesce(func.sum(qual.c.match_count), 0))) or 0
     )
 
+    # ヒット文数の降順（同数は revision_id 昇順）で法令を並べる（D-1）。
     revision_ids = list(
         await session.scalars(
-            select(LawNode.law_revision_id)
-            .where(match)
-            .distinct()
-            .order_by(LawNode.law_revision_id)
+            select(qual.c.law_revision_id)
+            .order_by(qual.c.match_count.desc(), qual.c.law_revision_id)
             .limit(limit)
             .offset(offset)
         )
@@ -103,11 +142,11 @@ async def keyword_search(
             bucket.append(
                 KeywordSentence(
                     position=path_text,
-                    text=highlight_text(text_plain, terms, highlight_tag),
+                    text=render_sentence(text_plain, terms, highlight_tag, snippet_length),
                 )
             )
 
-        for revision_id in revision_ids:
+        for revision_id in revision_ids:  # ランキング順を保つ
             if revision_id not in meta_by_revision:
                 continue
             law, revision = meta_by_revision[revision_id]
