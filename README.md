@@ -18,7 +18,7 @@ download  →  bootstrap / 日次差分ワーカー  →  v2 互換 API
 - **取り込み**: e-Gov 一括ダウンロード Zip を取得し、法令標準 XML を `law_node`（隣接リスト + ltree）に正規化。原文 XML も `law_xml` に保持。
 - **検索**: pg_bigm（部分一致）＋ tsvector（fugashi 形態素）のハイブリッド。`/keyword` は AND/OR/NOT・括弧・ワイルドカードの検索式に対応。
 - **再提供**: e-Gov v2 互換の 5 エンドポイント（下表）。
-- **MCP**: AI アシスタント（Claude 等）から法令を全文検索できる MCP サーバー（Streamable HTTP）。[`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
+- **MCP**: AI アシスタント（Claude 等）から法令を「探す → 絞る → 取る」操作ができる MCP サーバー（Streamable HTTP）。全文検索・法令一覧・改正履歴・本文取得の 4 ツール（下表）を公開する。[`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
 - **運用**: Procrastinate（PostgreSQL バックエンド、Redis 不使用）で日次差分を自動取り込み。
 - **品質**: CI（GitHub Actions）で ruff / mypy(strict) / pytest、testcontainers による実 DB 統合テスト。
 
@@ -32,6 +32,19 @@ download  →  bootstrap / 日次差分ワーカー  →  v2 互換 API
 | GET | `/api/2/law_file/{file_type}/{id}` | 本文ファイル（xml / json。html/rtf/docx は 400、§10-3） |
 | GET | `/api/2/keyword` | キーワード検索（検索式 + ハイライト） |
 | GET | `/api/2/attachment/{id}` | 添付ファイル（**未実装**。§4.8 / §11.2） |
+
+### MCP ツール
+
+AI アシスタントから利用できる MCP ツール。稼働中の FastAPI（`/api/2/...`）を呼ぶ薄いプロキシで、本文全体ではなく必要十分な情報（抜粋・light JSON）に絞って返す。
+
+| ツール | 概要 | 叩く API |
+|---|---|---|
+| `keyword_search(keyword, limit, law_type, category_cd, asof, current)` | 検索式（AND/OR/NOT・括弧・ワイルドカード）で全文検索し、該当条文の抜粋を関連度順に返す | `/api/2/keyword` |
+| `search_laws(title, law_type, limit, category_cd, asof, current)` | 題名・種別・分類・時点で法令を探し、一覧（法令 ID・題名・番号）を返す | `/api/2/laws` |
+| `list_law_revisions(law_id)` | 改正履歴一覧（施行日・現行最新フラグ・状態・改正法令 ID つき） | `/api/2/law_revisions/{id}` |
+| `get_law_text(law_id, elm, asof)` | 法令本文を light JSON で取得（`elm` で特定条文・`asof` で時点指定） | `/api/2/law_data/{id}` |
+
+典型フロー: `keyword_search` / `search_laws` で `law_id` を見つけ → `get_law_text(law_id, elm="MainProvision-Article_9")` で条文を読む。詳細は [`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
 
 ## クイックスタート
 

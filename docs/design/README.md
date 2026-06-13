@@ -7,7 +7,9 @@
 >
 > 実装済みの概要: 取得（一括 Zip）→ 取り込み（parse → `law_node` 投入 → text_search 生成）→
 > 検索（pg_bigm + tsvector）→ v2 互換 API 5 本（`/laws` `/law_revisions` `/law_data` `/law_file`
-> `/keyword`）→ Procrastinate ワーカーによる日次差分。未実装: `/attachment`（添付・§4.8/§11.2）。
+> `/keyword`）→ Procrastinate ワーカーによる日次差分。加えて AI アシスタント向けに法令検索 MCP
+> サーバー（Streamable HTTP、v2 互換 API を再利用するプロキシ。[`guides/MCPサーバーガイド.md`](../guides/MCPサーバーガイド.md)）を提供。
+> 未実装: `/attachment`（添付・§4.8/§11.2）。
 
 ## 目次
 
