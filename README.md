@@ -53,6 +53,15 @@ uv run laws-ingest download --section 2 --category 1
 uv run laws-ingest bootstrap var/landing/raw/bulk/<取得日>/section2/1_xml.zip
 ```
 
+全件をまとめて取り込む（初期ブートストラップ）:
+
+```sh
+uv run laws-ingest download --section 1          # 全件 Zip（GB 級）を取得
+uv run laws-ingest bootstrap var/landing/raw/bulk/<取得日>/section1/all_xml.zip
+```
+
+手順の詳細・再取り込み・確認方法は [`docs/guides/取り込み実行ガイド.md`](./docs/guides/取り込み実行ガイド.md) を参照。
+
 ### 3. API を起動して引く
 
 ```sh
