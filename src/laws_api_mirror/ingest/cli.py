@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="二次索引を保持したまま投入する（既定は DROP→後構築で高速化）",
     )
+    bootstrap.add_argument(
+        "--no-copy",
+        action="store_true",
+        help="COPY ではなく INSERT で投入する（性能比較用。既定は COPY）",
+    )
     bootstrap.set_defaults(func=_run_bootstrap)
 
     worker = subparsers.add_parser(
@@ -126,7 +131,9 @@ async def _run_bootstrap(args: argparse.Namespace) -> int:
     if not zip_path.exists():
         print(f"Zip が見つかりません: {zip_path}")
         return 2
-    summary = await bootstrap_from_zip(zip_path, drop_indexes=not args.keep_indexes)
+    summary = await bootstrap_from_zip(
+        zip_path, drop_indexes=not args.keep_indexes, use_copy=not args.no_copy
+    )
     print(
         json.dumps(
             {

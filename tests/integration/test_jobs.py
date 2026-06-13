@@ -62,3 +62,22 @@ async def test_worker_runs_ingest_job(database_url: str, tmp_path: Path) -> None
         )
     assert count == 15
     assert kind == "delta"
+
+
+async def test_load_insert_path(database_url: str) -> None:
+    """INSERT 経路（use_copy=False、性能比較用フォールバック）でも投入できる。"""
+    from laws_api_mirror.ingest.load import load_parsed_law
+    from laws_api_mirror.ingest.parse import parse_law
+
+    parsed = parse_law(FIXTURE_XML.read_bytes(), law_id="322CO0000000014")
+    revision_id = "INSERT_PATH_rev"
+    async with db_session.SessionFactory() as session:
+        async with session.begin():
+            result = await load_parsed_law(
+                session, parsed, law_revision_id=revision_id, use_copy=False
+            )
+        count = await session.scalar(
+            text("SELECT count(*) FROM law_node WHERE law_revision_id = :r"), {"r": revision_id}
+        )
+    assert result.node_count == 15
+    assert count == 15

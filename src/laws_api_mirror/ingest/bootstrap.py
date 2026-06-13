@@ -73,6 +73,7 @@ async def bootstrap_from_zip(
     session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession] = SessionFactory,
     drop_indexes: bool = True,
     kind: str = "full",
+    use_copy: bool = True,
 ) -> BootstrapSummary:
     """一括 Zip の全法令を DB に投入する。``kind`` は ingest_run の種別（full / delta）。"""
     entries = list(iter_law_xml(zip_path))
@@ -105,6 +106,7 @@ async def bootstrap_from_zip(
                     law_revision_id=entry.law_revision_id,
                     is_current_latest=None,
                     raw_xml=entry.xml,
+                    use_copy=use_copy,
                 )
                 # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
                 searched = await populate_text_search(

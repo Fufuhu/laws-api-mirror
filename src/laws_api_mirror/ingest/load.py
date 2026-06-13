@@ -9,15 +9,15 @@
 
 冪等性: 同一 ``law_revision_id`` に対する再実行で同じ結果になる（§11.3 / §13.7）。
 
-注: 大規模ブートストラップ向けの COPY バルク投入・二次索引の DROP→後構築（§13.4）は
-全件オーケストレーション側の最適化として後段で導入する。本モジュールは 1 法令単位の
-正しい投入を担う。
+``law_node`` は既定で asyncpg の COPY で投入する（``use_copy=False`` で INSERT。§13.4）。
+二次索引の DROP→後構築は全件オーケストレータ（bootstrap）が担う。
 """
 
 from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,6 +96,7 @@ async def load_parsed_law(
     law_revision_id: str,
     is_current_latest: bool | None = True,
     raw_xml: bytes | None = None,
+    use_copy: bool = True,
 ) -> LoadResult:
     """1 法令を DB に投入する。呼び出し側がトランザクション境界を管理する。
 
@@ -108,7 +109,7 @@ async def load_parsed_law(
     await _upsert_law_revision(session, parsed, law_revision_id, is_current_latest)
     if raw_xml is not None:
         await _upsert_law_xml(session, law_revision_id, raw_xml)
-    count = await _replace_nodes(session, parsed, law_revision_id)
+    count = await _replace_nodes(session, parsed, law_revision_id, use_copy=use_copy)
     return LoadResult(parsed.law_id, law_revision_id, count)
 
 
@@ -190,6 +191,8 @@ async def _replace_nodes(
     session: AsyncSession,
     parsed: ParsedLaw,
     law_revision_id: str,
+    *,
+    use_copy: bool,
 ) -> int:
     # 洗い替え（冪等性）。CASCADE で子ノードも消える。
     await session.execute(delete(LawNode).where(LawNode.law_revision_id == law_revision_id))
@@ -206,5 +209,33 @@ async def _replace_nodes(
     ids = [row[0] for row in result]
 
     rows = build_node_rows(nodes, ids, law_revision_id)
-    await session.execute(insert(LawNode), rows)
+    if use_copy:
+        await _copy_nodes(session, rows)
+    else:
+        await session.execute(insert(LawNode), rows)
     return len(rows)
+
+
+async def _copy_nodes(session: AsyncSession, rows: list[dict[str, Any]]) -> None:
+    """law_node を asyncpg の COPY で一括投入する（§13.4）。
+
+    前順リストなので親が子より先に並び、自己参照 FK も満たされる。``path``(ltree) は
+    接続時に登録したバイナリコーデック（db.session）で、``attrs``(jsonb) は JSON 文字列に
+    直列化して、``num_branches`` は配列としてエンコードされる。
+    """
+    columns = list(rows[0].keys())
+    # attrs(jsonb) は asyncpg 既定コーデックが JSON 文字列を期待するため直列化する
+    records = [
+        tuple(
+            json.dumps(row[column])
+            if column == "attrs" and row[column] is not None
+            else row[column]
+            for column in columns
+        )
+        for row in rows
+    ]
+    connection = await session.connection()
+    raw = await connection.get_raw_connection()
+    asyncpg_connection = raw.driver_connection
+    assert asyncpg_connection is not None
+    await asyncpg_connection.copy_records_to_table("law_node", records=records, columns=columns)
