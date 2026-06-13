@@ -11,10 +11,12 @@
 #
 # 接続情報・ポートは .env（.env.example を参照）で上書きできる。
 #
-# 取り込みワーカー（Procrastinate）も同梱する:
-#   docker compose up -d --build    # postgres + migrate(Alembic) + worker
+# 取り込みワーカー（Procrastinate）・再提供 API・MCP サーバーも同梱する:
+#   docker compose up -d --build    # postgres + migrate(Alembic) + worker + api + mcp
 # worker は日次 03:00 に差分を自動取り込みする（§10-5）。手動投入は:
 #   uv run laws-ingest enqueue-delta --update-date YYYYMMDD
+# api は v2 互換 API（http://localhost:8000）。mcp は法令検索 MCP サーバー
+#   （Streamable HTTP, http://localhost:8765/mcp）で api を HTTP 経由で呼ぶ。
 
 x-app: &app
   build:
@@ -69,6 +71,47 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # 再提供 API（v2 互換）。マイグレーション完了後に起動する。
+  api:
+    <<: *app
+    container_name: laws-api-mirror-api
+    command:
+      ["uvicorn", "laws_api_mirror.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # 法令検索 MCP サーバー（Streamable HTTP）。api を HTTP 経由で呼ぶ薄いプロキシ。
+  mcp:
+    <<: *app
+    container_name: laws-api-mirror-mcp
+    command: ["laws-mcp"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-laws}:${POSTGRES_PASSWORD:-laws}@postgres:5432/${POSTGRES_DB:-laws}
+      TZ: Asia/Tokyo
+      # コンテナ間通信先・全インタフェース待受に上書きする
+      API_BASE_URL: http://api:8000
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8765"
+    ports:
+      - "${MCP_PORT:-8765}:8765"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

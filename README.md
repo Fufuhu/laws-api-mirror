@@ -35,11 +35,12 @@ download  →  bootstrap / 日次差分ワーカー  →  v2 互換 API
 
 ## クイックスタート
 
-### 1. データ保存先と取り込みワーカーを起動
+### 1. データ保存先・取り込みワーカー・API・MCP を起動
 
 ```sh
 docker compose up -d --build
-# postgres（pg_bigm/ltree 同梱）+ migrate（Alembic）+ worker（日次差分）が起動する
+# postgres（pg_bigm/ltree 同梱）+ migrate（Alembic）+ worker（日次差分）
+# + api（v2 互換 API: http://localhost:8000）+ mcp（MCP: http://localhost:8765/mcp）が起動する
 ```
 
 ### 2. 法令データを取り込む

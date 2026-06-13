@@ -20,8 +20,8 @@ uv run ruff check src tests       # lint
 uv run ruff format src tests      # format（CI は --check）
 uv run mypy                       # 型チェック（strict、files=src,tests）
 uv run alembic upgrade head       # スキーマ適用 / alembic revision --autogenerate -m "..." で雛形生成
-docker compose up -d --build      # postgres + migrate + worker
-uv run uvicorn laws_api_mirror.api.app:app --reload   # API サーバー
+docker compose up -d --build      # postgres + migrate + worker + api(8000) + mcp(8765)
+uv run uvicorn laws_api_mirror.api.app:app --reload   # API サーバー（compose 外で個別起動する場合）
 uv run laws-ingest <download|bootstrap|worker|enqueue-delta>   # 取り込み CLI
 uv run laws-mcp                   # 法令検索 MCP サーバー（要 FastAPI 稼働）
 ```
