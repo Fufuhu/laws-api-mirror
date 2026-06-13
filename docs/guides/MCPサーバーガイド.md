@@ -12,10 +12,19 @@ Claude 等 ──(MCP: Streamable HTTP)──▶ laws-mcp (127.0.0.1:8765/mcp)
 ```
 
 - **トランスポート**: Streamable HTTP（`/mcp`）。
-- **再利用**: 検索ロジックは FastAPI 側を流用（MCP は要約のみ担当）。
-- 1st リリースは**検索ツール 1 つ**の最小構成。
+- **再利用**: 検索・取得ロジックは FastAPI 側を流用（MCP は要約のみ担当）。
+- 「**探す → 絞る → 取る**」を意識し、本文全体ではなく必要十分な情報に絞って返す。
 
 ## 公開ツール
+
+| ツール | 用途 | 叩く API |
+|---|---|---|
+| `keyword_search(keyword, limit=20)` | 検索式で全文検索し、該当条文の抜粋を返す | `/api/2/keyword` |
+| `search_laws(title=None, law_type=None, limit=20)` | 題名・種別で法令を探す | `/api/2/laws` |
+| `list_law_revisions(law_id)` | 法令の改正履歴一覧 | `/api/2/law_revisions/{id}` |
+| `get_law_text(law_id, elm=None)` | 法令本文（`elm` で特定条文だけ）を light JSON で取得 | `/api/2/law_data/{id}` |
+
+典型フロー: `keyword_search`/`search_laws` で `law_id` を見つけ → `get_law_text(law_id, elm="MainProvision-Article_9")` で条文を読む。法令が見つからない場合は例外ではなく `{"error": ...}` を返す。
 
 ### `keyword_search(keyword, limit=20)`
 
@@ -85,12 +94,9 @@ MCP サーバー定義、HTTP 型）:
 
 - **FastAPI と取り込み済み PostgreSQL が必要**（MCP 単体では検索できない）。
 - 認証は未設定（ローカル利用前提）。リモート公開時は MCP の OAuth / 経路上の認可を別途検討。
-- 公開ツールは現状 `keyword_search` のみ。
 
 ## 今後の拡張候補
 
-「探す → 構造を見る → 必要な条だけ取る」の段階設計でトークン効率を高める:
-
-- `get_law_outline(law_id)`: 章・節・条の見出しだけを返す（ナビ用、`law_node` 構造クエリ）。
-- `get_law_text(law_id, elm)`: 指定要素（例 `MainProvision-Article_9`）のプレーンテキスト（`navigate_elm` + レンダリング）。
-- `list_law_revisions(law_id)`: 履歴一覧。
+- `get_law_outline(law_id)`: 章・節・条の見出しだけを返すナビ用ツール（`law_node` の構造クエリ。専用 API エンドポイントの追加が前提）。
+- `get_law_text` のプレーンテキスト出力モード（単一条文を読む用途で light JSON より簡潔に）。
+- リモート公開時の認証（MCP OAuth）。

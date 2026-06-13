@@ -71,7 +71,7 @@ open http://127.0.0.1:8000/docs   # OpenAPI
 uv run laws-mcp   # http://127.0.0.1:8765/mcp（Streamable HTTP）
 ```
 
-MCP クライアントから `/mcp` に接続し `keyword_search` ツールを使う。詳細は [`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
+MCP クライアントから `/mcp` に接続し、`keyword_search` / `search_laws` / `list_law_revisions` / `get_law_text` ツールを使う。詳細は [`docs/guides/MCPサーバーガイド.md`](./docs/guides/MCPサーバーガイド.md)。
 
 ## CLI（`laws-ingest`）
 
