@@ -111,6 +111,10 @@ class LawNode(Base):
         UniqueConstraint("law_revision_id", "path", name="uq_law_node_revision_path"),
         Index("ix_law_node_path_gist", "path", postgresql_using="gist"),
         Index("ix_law_node_revision_parent_ordinal", "law_revision_id", "parent_id", "ordinal"),
+        # 自己参照 FK (parent_id → law_node.id, ON DELETE CASCADE) のカスケード検査用。
+        # 索引が無いと法令の洗い替え DELETE が削除行ごとに全表スキャンになる（§13.4 の
+        # bootstrap 索引 DROP 対象には含めない）。
+        Index("ix_law_node_parent_id", "parent_id"),
         Index("ix_law_node_revision_kind_num", "law_revision_id", "kind", "num_int"),
         Index("ix_law_node_text_search", "text_search", postgresql_using="gin"),
         Index(
