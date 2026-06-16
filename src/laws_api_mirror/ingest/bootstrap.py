@@ -16,6 +16,8 @@ Stage 1（展開）→ 法令ごとに parse + load → Stage I（二次索引�
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import multiprocessing
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -41,6 +43,13 @@ from laws_api_mirror.ingest.parse import parse_law
 from laws_api_mirror.ingest.search import populate_text_search
 
 _log = get_logger(__name__)
+
+#: 逐次パスで進捗ログ（ingest.progress）を出す法令件数の間隔
+_PROGRESS_LOG_EVERY = 100
+#: 並列パスで各シャードが共有カウンタを更新する法令件数の間隔（IPC を間引く）
+_SHARD_REPORT_EVERY = 20
+#: 並列パスでコーディネータが集約進捗を出す秒間隔
+_PROGRESS_INTERVAL_S = 15.0
 
 #: ロード前に DROP し、投入後に再作成する law_node の二次索引（§13.4）
 _LAW_NODE_SECONDARY_INDEXES = [
@@ -91,14 +100,17 @@ async def _load_entries(
     run_id: int,
     use_copy: bool,
     session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession],
+    on_progress: Callable[[int], None] | None = None,
 ) -> _LoadStats:
     """Zip の法令エントリ（``names`` 指定分、None なら全件）を 1 法令 = 1 Tx で投入する。
 
     ロード相のセッションでは ``synchronous_commit = off`` にする（クラッシュ時は landing
     zone から再実行可能なので許容、§13.4）。個別法令の失敗は記録して継続する（§11.12.3）。
+    ``on_progress`` は法令を 1 件処理するたびに、本呼び出し内の累計処理件数で呼ばれる。
     """
     name_set = set(names) if names is not None else None
     stats = _LoadStats()
+    processed = 0
     for entry in iter_law_xml(zip_path, names=name_set):
         try:
             async with session_factory() as session, session.begin():
@@ -149,6 +161,9 @@ async def _load_entries(
                         error=message[:1000],
                     )
                 )
+        processed += 1
+        if on_progress is not None:
+            on_progress(processed)
     return stats
 
 
@@ -159,27 +174,42 @@ def _run_shard(
     run_id: int,
     use_copy: bool,
     db_url: str,
+    progress_slots: Any,
+    slot_index: int,
 ) -> _LoadStats:
     """並列シャードのプロセス・エントリポイント（同期）。
 
     ``ProcessPoolExecutor`` から呼ばれる。各プロセスは独自の async エンジンを張り、
     担当分の法令だけを Zip から読んで投入する（同一テーブルへの並行 COPY、§13.2）。
     接続先 ``db_url`` は親から明示的に受け取る（spawn 起動の子は実行時の settings 変更を
-    引き継がないため）。
+    引き継がないため）。進捗は ``progress_slots[slot_index]`` に自分の処理件数を書き込み、
+    集約とログ出力はコーディネータ（親）が担う（子から直接ログしない）。
     """
+    # spawn 起動の子はロギング未設定なので、親と同じ設定を当てる（警告ログの体裁を揃える）。
+    from laws_api_mirror.core.config import settings
+    from laws_api_mirror.core.logging import configure_logging
+
+    configure_logging(settings.log_level, json_format=settings.log_json)
+
+    def _report(done: int) -> None:
+        if done % _SHARD_REPORT_EVERY == 0:
+            progress_slots[slot_index] = done
 
     async def _run() -> _LoadStats:
         engine = build_engine(db_url)
         factory = build_session_factory(engine)
         try:
-            return await _load_entries(
+            stats = await _load_entries(
                 zip_path=Path(zip_path_str),
                 names=names,
                 csv_meta=csv_meta,
                 run_id=run_id,
                 use_copy=use_copy,
                 session_factory=factory,
+                on_progress=_report,
             )
+            progress_slots[slot_index] = stats.inserted + stats.failed  # 端数も含む最終値
+            return stats
         finally:
             await engine.dispose()
 
@@ -216,31 +246,65 @@ async def _load_parallel(
     db_url: str,
 ) -> _LoadStats:
     """法令を law_id 単位でシャード分割し、プロセスプールで並行投入する（§13.2 / §13.4）。"""
-    shards = _assign_shards(entries, concurrency)
+    active_shards = [names for names in _assign_shards(entries, concurrency) if names]
     name_to_rev = {entry.name: entry.law_revision_id for entry in entries}
     zip_path_str = str(zip_path)
+    total = len(entries)
     loop = asyncio.get_running_loop()
 
     stats = _LoadStats()
-    with ProcessPoolExecutor(max_workers=concurrency) as executor:
-        futures = []
-        for names in shards:
-            if not names:
-                continue
-            # シャード担当分の meta だけを渡す（pickle サイズを抑える）
-            sub_meta = {
-                name_to_rev[name]: csv_meta[name_to_rev[name]]
-                for name in names
-                if name_to_rev[name] in csv_meta
-            }
-            futures.append(
-                loop.run_in_executor(
-                    executor, _run_shard, zip_path_str, names, sub_meta, run_id, use_copy, db_url
+    # 各シャードが自分のスロットに処理件数を書き込み、親が合計してログする（子はログしない）。
+    with multiprocessing.Manager() as manager:
+        progress_slots = manager.list([0] * len(active_shards))
+        with ProcessPoolExecutor(max_workers=concurrency) as executor:
+            futures = []
+            for slot_index, names in enumerate(active_shards):
+                # シャード担当分の meta だけを渡す（pickle サイズを抑える）
+                sub_meta = {
+                    name_to_rev[name]: csv_meta[name_to_rev[name]]
+                    for name in names
+                    if name_to_rev[name] in csv_meta
+                }
+                futures.append(
+                    loop.run_in_executor(
+                        executor,
+                        _run_shard,
+                        zip_path_str,
+                        names,
+                        sub_meta,
+                        run_id,
+                        use_copy,
+                        db_url,
+                        progress_slots,
+                        slot_index,
+                    )
                 )
-            )
-        for result in await asyncio.gather(*futures):
-            stats.merge(result)
+            progress_task = asyncio.create_task(_poll_progress(progress_slots, total, run_id))
+            try:
+                results = await asyncio.gather(*futures)
+            finally:
+                progress_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_task
+            for result in results:
+                stats.merge(result)
     return stats
+
+
+async def _poll_progress(progress_slots: Any, total: int, run_id: int) -> None:
+    """並列投入中、各シャードの進捗を合計して定期的にログする（コーディネータ側）。"""
+    while True:
+        await asyncio.sleep(_PROGRESS_INTERVAL_S)
+        done = sum(progress_slots)
+        _log.info(
+            "ingest.progress",
+            extra={
+                "run_id": run_id,
+                "done": done,
+                "total": total,
+                "pct": round(100 * done / total, 1) if total else 100.0,
+            },
+        )
 
 
 async def _save_and_drop_indexes(session: AsyncSession) -> dict[str, str]:
@@ -357,6 +421,19 @@ async def bootstrap_from_zip(
             db_url=settings.database_url,
         )
     else:
+
+        def _report(done: int) -> None:
+            if done % _PROGRESS_LOG_EVERY == 0:
+                _log.info(
+                    "ingest.progress",
+                    extra={
+                        "run_id": run_id,
+                        "done": done,
+                        "total": total,
+                        "pct": round(100 * done / total, 1) if total else 100.0,
+                    },
+                )
+
         stats = await _load_entries(
             zip_path=zip_path,
             names=None,
@@ -364,6 +441,7 @@ async def bootstrap_from_zip(
             run_id=run_id,
             use_copy=use_copy,
             session_factory=session_factory,
+            on_progress=_report,
         )
 
     inserted = stats.inserted
