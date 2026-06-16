@@ -61,6 +61,26 @@ docker compose up -d --build
 
 ### 2. 法令データを取り込む
 
+通常は **全件取り込み（初期ブートストラップ）** を行う。これで全法令が検索対象になる。
+
+```sh
+uv run laws-ingest download --section 1          # 全件 Zip（GB 級）を取得
+uv run laws-ingest bootstrap var/landing/raw/bulk/<取得日>/section1/all_xml.zip
+```
+
+> [!NOTE]
+> 全件は GB 級・数百万ノードになり、取り込みに数十分かかる。先に疎通だけ確認したい場合は、
+> 下記の分類別（小サイズ）で一連の流れを試してから全件に進むとよい。
+
+取り込み結果は `/health/ingest` で確認できる（`total` が取り込んだ法令数）。
+
+```sh
+curl -s localhost:8000/health/ingest | jq .
+```
+
+<details>
+<summary>分類別に一部だけ取り込む（スモークテスト・部分取り込み）</summary>
+
 ```sh
 # 分類別 Zip（例: 1=憲法）を取得 → landing zone に着地
 uv run laws-ingest download --section 2 --category 1
@@ -69,12 +89,8 @@ uv run laws-ingest download --section 2 --category 1
 uv run laws-ingest bootstrap var/landing/raw/bulk/<取得日>/section2/1_xml.zip
 ```
 
-全件をまとめて取り込む（初期ブートストラップ）:
-
-```sh
-uv run laws-ingest download --section 1          # 全件 Zip（GB 級）を取得
-uv run laws-ingest bootstrap var/landing/raw/bulk/<取得日>/section1/all_xml.zip
-```
+この方法では指定した分類の法令しか入らない（例: 憲法分類のみ）。全法令を引くには上記の `--section 1` を使う。
+</details>
 
 手順の詳細・再取り込み・確認方法は [`docs/guides/取り込み実行ガイド.md`](./docs/guides/取り込み実行ガイド.md) を参照。
 
