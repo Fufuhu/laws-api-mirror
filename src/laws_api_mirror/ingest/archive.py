@@ -34,6 +34,15 @@ class ArchiveEntry:
 
 
 @dataclass
+class LawEntryName:
+    """Zip 内の法令 XML エントリの「名前だけ」（XML 本文は読まない、§13.4 並列分配用）。"""
+
+    law_id: str
+    law_revision_id: str
+    name: str
+
+
+@dataclass
 class RevisionMeta:
     """索引 CSV 由来の法令リビジョン・メタ（§A-1）。"""
 
@@ -89,17 +98,41 @@ def read_csv_meta(zip_path: Path) -> dict[str, RevisionMeta]:
     return result
 
 
-def iter_law_xml(zip_path: Path) -> Iterator[ArchiveEntry]:
-    """一括 Zip から法令 XML エントリを順に取り出す。"""
+def iter_law_xml(zip_path: Path, *, names: set[str] | None = None) -> Iterator[ArchiveEntry]:
+    """一括 Zip から法令 XML エントリを順に取り出す。
+
+    ``names`` を渡すと、その Zip エントリ名集合に含まれるものだけを読み出す
+    （並列シャードが担当分だけを読むため、§13.4）。
+    """
     with zipfile.ZipFile(zip_path) as archive:
         for name in archive.namelist():
             if not name.endswith(".xml"):
+                continue
+            if names is not None and name not in names:
                 continue
             law_revision_id = Path(name).stem
             yield ArchiveEntry(
                 law_id=_law_id_of(law_revision_id),
                 law_revision_id=law_revision_id,
                 xml=archive.read(name),
+            )
+
+
+def iter_law_names(zip_path: Path) -> Iterator[LawEntryName]:
+    """一括 Zip の法令 XML エントリを「名前だけ」列挙する（XML 本文は読まない）。
+
+    全件 Zip は XML 本文が数百 MB になるため、並列分配の段では本文を読まずに
+    ``(law_id, law_revision_id, Zip エントリ名)`` だけを軽量に列挙する（§13.4）。
+    """
+    with zipfile.ZipFile(zip_path) as archive:
+        for name in archive.namelist():
+            if not name.endswith(".xml"):
+                continue
+            law_revision_id = Path(name).stem
+            yield LawEntryName(
+                law_id=_law_id_of(law_revision_id),
+                law_revision_id=law_revision_id,
+                name=name,
             )
 
 

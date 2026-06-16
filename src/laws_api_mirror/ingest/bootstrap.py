@@ -15,7 +15,9 @@ Stage 1（展開）→ 法令ごとに parse + load → Stage I（二次索引�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,8 +28,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from laws_api_mirror.core.logging import get_logger
 from laws_api_mirror.db.models import IngestLawEvent, IngestRun
-from laws_api_mirror.db.session import SessionFactory
-from laws_api_mirror.ingest.archive import iter_law_xml, read_csv_meta
+from laws_api_mirror.db.session import build_engine, build_session_factory
+from laws_api_mirror.ingest.archive import (
+    LawEntryName,
+    RevisionMeta,
+    iter_law_names,
+    iter_law_xml,
+    read_csv_meta,
+)
 from laws_api_mirror.ingest.load import load_parsed_law
 from laws_api_mirror.ingest.parse import parse_law
 from laws_api_mirror.ingest.search import populate_text_search
@@ -53,6 +61,186 @@ class BootstrapSummary:
     failed: int
     node_count: int
     failures: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class _LoadStats:
+    """ロード相の集計（逐次・各シャードで共有。プロセス間で受け渡すため pickle 可能）。"""
+
+    inserted: int = 0
+    failed: int = 0
+    node_count: int = 0
+    text_searched: int = 0
+    failures: list[tuple[str, str]] = field(default_factory=list)
+
+    def merge(self, other: _LoadStats) -> None:
+        self.inserted += other.inserted
+        self.failed += other.failed
+        self.node_count += other.node_count
+        self.text_searched += other.text_searched
+        for failure in other.failures:
+            if len(self.failures) < 20:  # 代表例のみ保持（記録は ingest_law_event）
+                self.failures.append(failure)
+
+
+async def _load_entries(
+    *,
+    zip_path: Path,
+    names: list[str] | None,
+    csv_meta: dict[str, RevisionMeta],
+    run_id: int,
+    use_copy: bool,
+    session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession],
+) -> _LoadStats:
+    """Zip の法令エントリ（``names`` 指定分、None なら全件）を 1 法令 = 1 Tx で投入する。
+
+    ロード相のセッションでは ``synchronous_commit = off`` にする（クラッシュ時は landing
+    zone から再実行可能なので許容、§13.4）。個別法令の失敗は記録して継続する（§11.12.3）。
+    """
+    name_set = set(names) if names is not None else None
+    stats = _LoadStats()
+    for entry in iter_law_xml(zip_path, names=name_set):
+        try:
+            async with session_factory() as session, session.begin():
+                # ロード相は per-law fsync を避ける（§13.4）。SET LOCAL で当該 Tx に限定する。
+                await session.execute(text("SET LOCAL synchronous_commit = off"))
+                parsed = parse_law(entry.xml, law_id=entry.law_id)
+                result = await load_parsed_law(
+                    session,
+                    parsed,
+                    law_revision_id=entry.law_revision_id,
+                    raw_xml=entry.xml,
+                    use_copy=use_copy,
+                    meta=csv_meta.get(entry.law_revision_id),
+                )
+                # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
+                searched = await populate_text_search(
+                    session, law_revision_id=entry.law_revision_id
+                )
+                session.add(
+                    IngestLawEvent(
+                        ingest_run_id=run_id,
+                        law_revision_id=entry.law_revision_id,
+                        action="inserted",
+                    )
+                )
+            stats.inserted += 1
+            stats.node_count += result.node_count
+            stats.text_searched += searched
+        except Exception as exc:  # 個別失敗は記録して継続（§11.12.3）
+            stats.failed += 1
+            message = str(exc)
+            if len(stats.failures) < 20:
+                stats.failures.append((entry.law_revision_id, message[:200]))
+            _log.warning(
+                "ingest.law.failed",
+                extra={
+                    "run_id": run_id,
+                    "law_revision_id": entry.law_revision_id,
+                    "error": message[:200],
+                },
+            )
+            async with session_factory() as session, session.begin():
+                session.add(
+                    IngestLawEvent(
+                        ingest_run_id=run_id,
+                        law_revision_id=entry.law_revision_id,
+                        action="failed",
+                        error=message[:1000],
+                    )
+                )
+    return stats
+
+
+def _run_shard(
+    zip_path_str: str,
+    names: list[str],
+    csv_meta: dict[str, RevisionMeta],
+    run_id: int,
+    use_copy: bool,
+    db_url: str,
+) -> _LoadStats:
+    """並列シャードのプロセス・エントリポイント（同期）。
+
+    ``ProcessPoolExecutor`` から呼ばれる。各プロセスは独自の async エンジンを張り、
+    担当分の法令だけを Zip から読んで投入する（同一テーブルへの並行 COPY、§13.2）。
+    接続先 ``db_url`` は親から明示的に受け取る（spawn 起動の子は実行時の settings 変更を
+    引き継がないため）。
+    """
+
+    async def _run() -> _LoadStats:
+        engine = build_engine(db_url)
+        factory = build_session_factory(engine)
+        try:
+            return await _load_entries(
+                zip_path=Path(zip_path_str),
+                names=names,
+                csv_meta=csv_meta,
+                run_id=run_id,
+                use_copy=use_copy,
+                session_factory=factory,
+            )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_run())
+
+
+def _assign_shards(entries: list[LawEntryName], concurrency: int) -> list[list[str]]:
+    """法令エントリを ``concurrency`` 個のシャードへ分配する（同一 law_id は同一シャード）。
+
+    同一 ``law_id`` を別プロセスが同時 UPSERT するとロック競合・デッドロックを招くため、
+    law_id 単位で round-robin に割り当て、リビジョンが分散してもまとまるようにする。
+    """
+    shards: list[list[str]] = [[] for _ in range(concurrency)]
+    law_to_shard: dict[str, int] = {}
+    next_shard = 0
+    for entry in entries:
+        shard = law_to_shard.get(entry.law_id)
+        if shard is None:
+            shard = next_shard % concurrency
+            law_to_shard[entry.law_id] = shard
+            next_shard += 1
+        shards[shard].append(entry.name)
+    return shards
+
+
+async def _load_parallel(
+    *,
+    zip_path: Path,
+    entries: list[LawEntryName],
+    csv_meta: dict[str, RevisionMeta],
+    run_id: int,
+    use_copy: bool,
+    concurrency: int,
+    db_url: str,
+) -> _LoadStats:
+    """法令を law_id 単位でシャード分割し、プロセスプールで並行投入する（§13.2 / §13.4）。"""
+    shards = _assign_shards(entries, concurrency)
+    name_to_rev = {entry.name: entry.law_revision_id for entry in entries}
+    zip_path_str = str(zip_path)
+    loop = asyncio.get_running_loop()
+
+    stats = _LoadStats()
+    with ProcessPoolExecutor(max_workers=concurrency) as executor:
+        futures = []
+        for names in shards:
+            if not names:
+                continue
+            # シャード担当分の meta だけを渡す（pickle サイズを抑える）
+            sub_meta = {
+                name_to_rev[name]: csv_meta[name_to_rev[name]]
+                for name in names
+                if name_to_rev[name] in csv_meta
+            }
+            futures.append(
+                loop.run_in_executor(
+                    executor, _run_shard, zip_path_str, names, sub_meta, run_id, use_copy, db_url
+                )
+            )
+        for result in await asyncio.gather(*futures):
+            stats.merge(result)
+    return stats
 
 
 async def _save_and_drop_indexes(session: AsyncSession) -> dict[str, str]:
@@ -116,13 +304,27 @@ async def populate_enforcement_periods(
 async def bootstrap_from_zip(
     zip_path: Path,
     *,
-    session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession] = SessionFactory,
+    session_factory: Callable[[], AsyncSession] | async_sessionmaker[AsyncSession] | None = None,
     drop_indexes: bool = True,
     kind: str = "full",
     use_copy: bool = True,
+    concurrency: int = 1,
 ) -> BootstrapSummary:
-    """一括 Zip の全法令を DB に投入する。``kind`` は ingest_run の種別（full / delta）。"""
-    entries = list(iter_law_xml(zip_path))
+    """一括 Zip の全法令を DB に投入する。``kind`` は ingest_run の種別（full / delta）。
+
+    ``concurrency > 1`` で law_id 単位のシャードをプロセスプールで並行投入する（§13.2）。
+    差分取り込み（件数が小さくライブ索引）は既定の逐次（``concurrency=1``）で呼ぶこと。
+    並列時は各シャードが独自の DB 接続を張るため、``session_factory`` は逐次パス専用。
+
+    ``session_factory`` 未指定時は実行時点の共有 ``SessionFactory`` を遅延束縛する
+    （``db.session.configure`` による接続先差し替えを取りこぼさないため。import 順に依存しない）。
+    """
+    if session_factory is None:
+        from laws_api_mirror.db.session import SessionFactory
+
+        session_factory = SessionFactory
+    # 並列分配の段では XML 本文を読まず、名前だけを軽量に列挙する（§13.4）。
+    entries = list(iter_law_names(zip_path))
     csv_meta = read_csv_meta(zip_path)
     total = len(entries)
 
@@ -132,67 +334,43 @@ async def bootstrap_from_zip(
         await session.flush()
         run_id = run.id
 
-    _log.info("ingest.run.started", extra={"run_id": run_id, "kind": kind, "total": total})
+    _log.info(
+        "ingest.run.started",
+        extra={"run_id": run_id, "kind": kind, "total": total, "concurrency": concurrency},
+    )
 
     saved_defs: dict[str, str] = {}
     if drop_indexes:
         async with session_factory() as session, session.begin():
             saved_defs = await _save_and_drop_indexes(session)
 
-    inserted = 0
-    failed = 0
-    node_count = 0
-    text_searched = 0
-    failures: list[tuple[str, str]] = []
+    if concurrency > 1 and total > 0:
+        from laws_api_mirror.core.config import settings
 
-    for entry in entries:
-        try:
-            async with session_factory() as session, session.begin():
-                parsed = parse_law(entry.xml, law_id=entry.law_id)
-                result = await load_parsed_law(
-                    session,
-                    parsed,
-                    law_revision_id=entry.law_revision_id,
-                    raw_xml=entry.xml,
-                    use_copy=use_copy,
-                    meta=csv_meta.get(entry.law_revision_id),
-                )
-                # Stage I 前半: text_search を法令単位で生成（§13.6。GIN 再構築の前）。
-                searched = await populate_text_search(
-                    session, law_revision_id=entry.law_revision_id
-                )
-                session.add(
-                    IngestLawEvent(
-                        ingest_run_id=run_id,
-                        law_revision_id=entry.law_revision_id,
-                        action="inserted",
-                    )
-                )
-            inserted += 1
-            node_count += result.node_count
-            text_searched += searched
-        except Exception as exc:  # 個別失敗は記録して継続（§11.12.3）
-            failed += 1
-            message = str(exc)
-            if len(failures) < 20:
-                failures.append((entry.law_revision_id, message[:200]))
-            _log.warning(
-                "ingest.law.failed",
-                extra={
-                    "run_id": run_id,
-                    "law_revision_id": entry.law_revision_id,
-                    "error": message[:200],
-                },
-            )
-            async with session_factory() as session, session.begin():
-                session.add(
-                    IngestLawEvent(
-                        ingest_run_id=run_id,
-                        law_revision_id=entry.law_revision_id,
-                        action="failed",
-                        error=message[:1000],
-                    )
-                )
+        stats = await _load_parallel(
+            zip_path=zip_path,
+            entries=entries,
+            csv_meta=csv_meta,
+            run_id=run_id,
+            use_copy=use_copy,
+            concurrency=concurrency,
+            db_url=settings.database_url,
+        )
+    else:
+        stats = await _load_entries(
+            zip_path=zip_path,
+            names=None,
+            csv_meta=csv_meta,
+            run_id=run_id,
+            use_copy=use_copy,
+            session_factory=session_factory,
+        )
+
+    inserted = stats.inserted
+    failed = stats.failed
+    node_count = stats.node_count
+    text_searched = stats.text_searched
+    failures = stats.failures
 
     if drop_indexes and saved_defs:
         async with session_factory() as session, session.begin():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from laws_api_mirror.ingest.archive import count_law_xml, iter_law_xml
+from laws_api_mirror.ingest.archive import count_law_xml, iter_law_names, iter_law_xml
 
 
 def _make_zip(path: Path) -> None:
@@ -39,3 +39,27 @@ def test_count_law_xml(tmp_path: Path) -> None:
     zip_path = tmp_path / "bulk.zip"
     _make_zip(zip_path)
     assert count_law_xml(zip_path) == 2
+
+
+def test_iter_law_names_lists_without_reading_body(tmp_path: Path) -> None:
+    """名前だけ列挙し、CSV をスキップする（XML 本文は読まない、§13.4 並列分配用）。"""
+    zip_path = tmp_path / "bulk.zip"
+    _make_zip(zip_path)
+
+    names = list(iter_law_names(zip_path))
+    assert len(names) == 2
+    by_rev = {n.law_revision_id: n for n in names}
+    e1 = by_rev["141IO0000000291_20250601_507CO0000000193"]
+    assert e1.law_id == "141IO0000000291"
+    assert e1.name.endswith(".xml")
+
+
+def test_iter_law_xml_filters_by_names(tmp_path: Path) -> None:
+    """names 指定で、その Zip エントリ名のものだけを読み出す（シャード担当分）。"""
+    zip_path = tmp_path / "bulk.zip"
+    _make_zip(zip_path)
+
+    target = next(n.name for n in iter_law_names(zip_path) if n.law_id == "321CONSTITUTION")
+    entries = list(iter_law_xml(zip_path, names={target}))
+    assert len(entries) == 1
+    assert entries[0].law_id == "321CONSTITUTION"

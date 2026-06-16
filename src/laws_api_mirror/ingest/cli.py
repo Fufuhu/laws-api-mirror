@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from datetime import date, datetime
 from pathlib import Path
 
@@ -26,6 +27,11 @@ from pydantic import ValidationError
 
 from laws_api_mirror.ingest.bulkdownload import BulkDownloadRequest, FileSection
 from laws_api_mirror.ingest.downloader import BulkDownloader, DownloadError
+
+
+def _default_concurrency() -> int:
+    """既定の並列ワーカー数（コア数 − 1、最低 1）。§13.4「コア数 − 余裕」。"""
+    return max(1, (os.cpu_count() or 2) - 1)
 
 
 def _parse_date(value: str) -> date:
@@ -81,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="COPY ではなく INSERT で投入する（性能比較用。既定は COPY）",
     )
+    bootstrap.add_argument(
+        "-j",
+        "--concurrency",
+        type=int,
+        default=_default_concurrency(),
+        help="並列ワーカー数（law_id 単位でシャード分割。既定: コア数 − 1。1 で逐次）",
+    )
     bootstrap.set_defaults(func=_run_bootstrap)
 
     worker = subparsers.add_parser(
@@ -132,7 +145,10 @@ async def _run_bootstrap(args: argparse.Namespace) -> int:
         print(f"Zip が見つかりません: {zip_path}")
         return 2
     summary = await bootstrap_from_zip(
-        zip_path, drop_indexes=not args.keep_indexes, use_copy=not args.no_copy
+        zip_path,
+        drop_indexes=not args.keep_indexes,
+        use_copy=not args.no_copy,
+        concurrency=args.concurrency,
     )
     print(
         json.dumps(

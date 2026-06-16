@@ -6,18 +6,43 @@
 
 from __future__ import annotations
 
+import zipfile
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from laws_api_mirror.api.app import app
 
+_FIXTURE_XML = Path(__file__).parent.parent / "fixtures" / "laws" / "322CO0000000014.xml"
+
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
+
+
+async def test_bootstrap_parallel_inserts_all_shards(database_url: str, tmp_path: Path) -> None:
+    """concurrency>1 で law_id 単位のシャードがプロセスプールで並行投入される（§13.2）。"""
+    from laws_api_mirror.ingest.bootstrap import bootstrap_from_zip
+
+    xml = _FIXTURE_XML.read_bytes()
+    # 2 つの異なる law_id（別シャードに割り当てられる）。本文は同一フィクスチャを流用。
+    revisions = [
+        "TESTLAWAAA0000001_19470503_000000000000000",
+        "TESTLAWBBB0000002_19470503_000000000000000",
+    ]
+    zip_path = tmp_path / "parallel.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        for rev in revisions:
+            archive.writestr(f"{rev}/{rev}.xml", xml)
+
+    summary = await bootstrap_from_zip(zip_path, concurrency=2)
+    assert summary.failed == 0, summary.failures
+    assert summary.inserted == 2
+    assert summary.node_count > 0
 
 
 async def test_health_db(client: AsyncClient, database_url: str) -> None:
