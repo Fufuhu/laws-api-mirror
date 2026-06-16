@@ -84,6 +84,31 @@ MCP サーバー定義、HTTP 型）:
 }
 ```
 
+### Claude Code（CLI）での登録
+
+Claude Code では `claude mcp add` で HTTP 型として登録する（MCP サーバーが稼働している前提）:
+
+```sh
+# 自分だけが使う（既定: local スコープ＝このマシンのこのプロジェクトのみ）
+claude mcp add --transport http laws-api-mirror http://127.0.0.1:8765/mcp
+
+# チームで共有する（project スコープ＝リポジトリ直下の .mcp.json に書き出す。コミットして共有）
+claude mcp add --transport http --scope project laws-api-mirror http://127.0.0.1:8765/mcp
+
+# 自分の全プロジェクトで使う（user スコープ）
+claude mcp add --transport http --scope user laws-api-mirror http://127.0.0.1:8765/mcp
+```
+
+登録内容の確認・削除:
+
+```sh
+claude mcp list                 # 登録済みサーバーと接続状態
+claude mcp get laws-api-mirror  # 詳細（URL・トランスポート・スコープ）
+claude mcp remove laws-api-mirror
+```
+
+Claude Code のセッション内では `/mcp` で接続状態と公開ツール一覧を確認できる。
+
 接続後、`keyword_search` / `search_laws` / `list_law_revisions` / `get_law_text` の 4 ツールが利用可能になる。
 
 ## 設定（環境変数 / `.env`）
